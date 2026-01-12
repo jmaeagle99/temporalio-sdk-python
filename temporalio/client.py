@@ -29,6 +29,7 @@ from typing import (
     Any,
     Concatenate,
     Generic,
+    Optional,
     cast,
     overload,
 )
@@ -76,7 +77,7 @@ from temporalio.service import (
     TLSConfig,
 )
 
-from .common import HeaderCodecBehavior
+from .common import HeaderCodecBehavior, PayloadLimitsConfig, _PayloadLimitsValidator
 from .types import (
     AnyType,
     LocalReturnType,
@@ -129,6 +130,7 @@ class Client:
         runtime: temporalio.runtime.Runtime | None = None,
         http_connect_proxy_config: HttpConnectProxyConfig | None = None,
         header_codec_behavior: HeaderCodecBehavior = HeaderCodecBehavior.NO_CODEC,
+        payload_limits: PayloadLimitsConfig | None = None,
     ) -> Self:
         """Connect to a Temporal server.
 
@@ -217,6 +219,7 @@ class Client:
             default_workflow_query_reject_condition=default_workflow_query_reject_condition,
             header_codec_behavior=header_codec_behavior,
             plugins=plugins,
+            payload_limits=payload_limits,
         )
 
     def __init__(
@@ -230,6 +233,7 @@ class Client:
         default_workflow_query_reject_condition: None
         | (temporalio.common.QueryRejectCondition) = None,
         header_codec_behavior: HeaderCodecBehavior = HeaderCodecBehavior.NO_CODEC,
+        payload_limits: PayloadLimitsConfig | None,
     ):
         """Create a Temporal client from a service client.
 
@@ -244,6 +248,7 @@ class Client:
             interceptors=interceptors,
             default_workflow_query_reject_condition=default_workflow_query_reject_condition,
             header_codec_behavior=header_codec_behavior,
+            payload_limits=payload_limits,
         )
         self._initial_config = config.copy()
 
@@ -1534,6 +1539,7 @@ class ClientConfig(TypedDict, total=False):
         temporalio.common.QueryRejectCondition | None
     ]
     header_codec_behavior: Required[HeaderCodecBehavior]
+    payload_limits: Optional[PayloadLimitsConfig]
 
 
 class WorkflowHistoryEventFilterType(IntEnum):
@@ -5845,9 +5851,26 @@ class OutboundInterceptor:
 
 
 class _ClientImpl(OutboundInterceptor):
+    _payload_limits_validator: _PayloadLimitsValidator
+
     def __init__(self, client: Client) -> None:  # type: ignore
         # We are intentionally not calling the base class's __init__ here
         self._client = client
+
+        async def describe_namespace():
+            return await client.workflow_service.describe_namespace(
+                temporalio.api.workflowservice.v1.DescribeNamespaceRequest(
+                    namespace=client.namespace,
+                ),
+                retry=True,
+                metadata={},
+                timeout=None,
+            )
+
+        self._payload_limits_validator = _PayloadLimitsValidator(
+            client.config().get("payload_limits"),
+            describe_namespace,
+        )
 
     ### Workflow calls
 
@@ -5862,6 +5885,9 @@ class _ClientImpl(OutboundInterceptor):
             req = await self._build_signal_with_start_workflow_execution_request(input)
         else:
             req = await self._build_start_workflow_execution_request(input)
+
+        if not await self._payload_limits_validator.check_and_log(req):
+            raise temporalio.exceptions.PayloadLimitError("Over error threshold")
 
         resp: (
             temporalio.api.workflowservice.v1.StartWorkflowExecutionResponse

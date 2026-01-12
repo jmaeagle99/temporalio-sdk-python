@@ -6,7 +6,7 @@ import inspect
 import types
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import IntEnum
@@ -22,12 +22,14 @@ from typing import (
 )
 
 import google.protobuf.internal.containers
+import google.protobuf.message
 from typing_extensions import NamedTuple, Self
 
 import temporalio.api.common.v1
 import temporalio.api.deployment.v1
 import temporalio.api.enums.v1
 import temporalio.api.workflow.v1
+import temporalio.api.workflowservice.v1
 import temporalio.types
 
 
@@ -1261,3 +1263,30 @@ class HeaderCodecBehavior(IntEnum):
     """Encode and decode all headers automatically"""
     WORKFLOW_ONLY_CODEC = 3
     """Only automatically encode and decode headers in workflow activation encoding and decoding."""
+
+
+@dataclass
+class PayloadLimitsConfig:
+    upload_size_warning_limit: int
+    upload_size_warning_disabled: bool = False
+    upload_size_error_disabled: bool = False
+
+
+class _PayloadLimitsValidator:
+    _config: PayloadLimitsConfig | None
+    _describe_namespace: Callable[
+        [], Awaitable[temporalio.api.workflowservice.v1.DescribeNamespaceResponse]
+    ]
+
+    def __init__(
+        self,
+        config: PayloadLimitsConfig | None,
+        describe_namespace: Callable[
+            [], Awaitable[temporalio.api.workflowservice.v1.DescribeNamespaceResponse]
+        ],
+    ):
+        self._config = config
+        self._describe_namespace = describe_namespace
+
+    async def check_and_log(self, message: google.protobuf.message.Message) -> bool:
+        return True

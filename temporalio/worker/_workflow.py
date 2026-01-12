@@ -14,6 +14,7 @@ from datetime import timezone
 from types import TracebackType
 
 import temporalio.api.common.v1
+import temporalio.api.workflowservice.v1
 import temporalio.bridge.proto.workflow_activation
 import temporalio.bridge.proto.workflow_completion
 import temporalio.bridge.runtime
@@ -44,6 +45,8 @@ LOG_PROTOS = False
 
 
 class _WorkflowWorker:  # type:ignore[reportUnusedClass]
+    _payload_limits_validator: temporalio.common._PayloadLimitsValidator
+
     def __init__(
         self,
         *,
@@ -161,6 +164,18 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                 raise TypeError("More than one dynamic workflow")
             else:
                 self._dynamic_workflow = defn
+
+        async def describe_namespace() -> (
+            temporalio.api.workflowservice.v1.DescribeNamespaceResponse
+        ):
+            return temporalio.api.workflowservice.v1.DescribeNamespaceResponse(
+                namespace_info=None
+            )
+
+        self._payload_limits_validator = temporalio.common._PayloadLimitsValidator(
+            config=None,
+            describe_namespace=describe_namespace,
+        )
 
     async def run(self) -> None:
         # Continually poll for workflow work
@@ -372,6 +387,9 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                 )
                 completion.failed.Clear()
                 completion.failed.failure.message = f"Failed encoding completion: {err}"
+
+        if not await self._payload_limits_validator.check_and_log(completion):
+            raise temporalio.exceptions.PayloadLimitError("Over error threshold")
 
         # Send off completion
         if LOG_PROTOS:

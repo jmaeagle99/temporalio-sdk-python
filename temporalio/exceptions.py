@@ -446,3 +446,8 @@ def is_cancelled_exception(exception: BaseException) -> bool:
             and isinstance(exception.cause, CancelledError)
         )
     )
+
+
+class PayloadLimitError(FailureError):
+    def __init__(self, message: str):
+        super().__init__(message)

@@ -1,11 +1,26 @@
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 from google.protobuf.descriptor import Descriptor, FieldDescriptor
 
 from temporalio.api.common.v1.message_pb2 import Payload, Payloads, SearchAttributes
+from temporalio.api.workflowservice.v1.request_response_pb2 import (
+    QueryWorkflowRequest,
+    RespondActivityTaskCanceledByIdRequest,
+    RespondActivityTaskCanceledRequest,
+    RespondActivityTaskCompletedByIdRequest,
+    RespondActivityTaskCompletedRequest,
+    RespondActivityTaskFailedByIdRequest,
+    RespondActivityTaskFailedRequest,
+    RespondQueryTaskCompletedRequest,
+    RespondWorkflowTaskCompletedRequest,
+    RespondWorkflowTaskFailedRequest,
+    SignalWithStartWorkflowExecutionRequest,
+    SignalWorkflowExecutionRequest,
+    StartWorkflowExecutionRequest,
+    UpdateWorkflowExecutionRequest,
+)
 from temporalio.bridge.proto.workflow_activation.workflow_activation_pb2 import (
     WorkflowActivation,
 )
@@ -288,9 +303,22 @@ def write_generated_visitors_into_visitor_generated_py() -> None:
     """Write the generated visitor code into _visitor.py."""
     out_path = base_dir / "temporalio" / "bridge" / "_visitor.py"
 
-    # Build root descriptors: WorkflowActivation, WorkflowActivationCompletion,
-    # and all messages from selected API modules
+    # Build root descriptors and all messages from selected API modules
     roots: list[Descriptor] = [
+        QueryWorkflowRequest.DESCRIPTOR,
+        RespondActivityTaskCanceledRequest.DESCRIPTOR,
+        RespondActivityTaskCanceledByIdRequest.DESCRIPTOR,
+        RespondActivityTaskCompletedByIdRequest.DESCRIPTOR,
+        RespondActivityTaskCompletedRequest.DESCRIPTOR,
+        RespondActivityTaskFailedByIdRequest.DESCRIPTOR,
+        RespondActivityTaskFailedRequest.DESCRIPTOR,
+        RespondQueryTaskCompletedRequest.DESCRIPTOR,
+        RespondWorkflowTaskCompletedRequest.DESCRIPTOR,
+        RespondWorkflowTaskFailedRequest.DESCRIPTOR,
+        SignalWorkflowExecutionRequest.DESCRIPTOR,
+        SignalWithStartWorkflowExecutionRequest.DESCRIPTOR,
+        StartWorkflowExecutionRequest.DESCRIPTOR,
+        UpdateWorkflowExecutionRequest.DESCRIPTOR,
         WorkflowActivation.DESCRIPTOR,
         WorkflowActivationCompletion.DESCRIPTOR,
     ]

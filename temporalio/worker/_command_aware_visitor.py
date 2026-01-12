@@ -33,6 +33,12 @@ class CommandInfo:
     command_seq: int
 
 
+@dataclass(frozen=True)
+class ActivityCommandInfo(CommandInfo):
+    activity_id: str
+    activity_type: str
+
+
 current_command_info: contextvars.ContextVar[CommandInfo | None] = (
     contextvars.ContextVar("current_command_info", default=None)
 )
@@ -49,13 +55,23 @@ class CommandAwarePayloadVisitor(PayloadVisitor):
     async def _visit_coresdk_workflow_commands_ScheduleActivity(
         self, fs: VisitorFunctions, o: ScheduleActivity
     ) -> None:
-        with current_command(CommandType.COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK, o.seq):
+        with current_command_activity(
+            CommandType.COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK,
+            o.seq,
+            o.activity_id,
+            o.activity_type,
+        ):
             await super()._visit_coresdk_workflow_commands_ScheduleActivity(fs, o)
 
     async def _visit_coresdk_workflow_commands_ScheduleLocalActivity(
         self, fs: VisitorFunctions, o: ScheduleLocalActivity
     ) -> None:
-        with current_command(CommandType.COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK, o.seq):
+        with current_command_activity(
+            CommandType.COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK,
+            o.seq,
+            o.activity_id,
+            o.activity_type,
+        ):
             await super()._visit_coresdk_workflow_commands_ScheduleLocalActivity(fs, o)
 
     async def _visit_coresdk_workflow_commands_StartChildWorkflowExecution(
@@ -155,6 +171,29 @@ def current_command(
     """Context manager for setting command info."""
     token = current_command_info.set(
         CommandInfo(command_type=command_type, command_seq=command_seq)
+    )
+    try:
+        yield
+    finally:
+        if token:
+            current_command_info.reset(token)
+
+
+@contextmanager
+def current_command_activity(
+    command_type: CommandType.ValueType,
+    command_seq: int,
+    activity_id: str,
+    activity_type: str,
+) -> Iterator[None]:
+    """Context manager for setting command info."""
+    token = current_command_info.set(
+        ActivityCommandInfo(
+            command_type=command_type,
+            command_seq=command_seq,
+            activity_id=activity_id,
+            activity_type=activity_type,
+        )
     )
     try:
         yield
