@@ -33,6 +33,7 @@ import temporalio.client
 import temporalio.common
 import temporalio.converter
 import temporalio.exceptions
+from temporalio.worker._payloads import _WorkerPayloadLimits
 
 from ._interceptor import (
     ActivityInboundInterceptor,
@@ -125,6 +126,10 @@ class _ActivityWorker:
                 raise TypeError("More than one dynamic activity")
             else:
                 self._dynamic_activity = defn
+
+    def set_payload_limits(self, limits: _WorkerPayloadLimits) -> None:
+        if limits:
+            self._data_converter = limits.apply_as_defaults(self._data_converter)
 
     async def run(self) -> None:
         """Continually poll for activity tasks and dispatch to handlers."""

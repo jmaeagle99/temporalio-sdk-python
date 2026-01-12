@@ -33,13 +33,13 @@ import temporalio.client
 import temporalio.common
 import temporalio.converter
 import temporalio.nexus
-from temporalio.bridge.worker import PollShutdownError
 from temporalio.exceptions import (
     ApplicationError,
     WorkflowAlreadyStartedError,
 )
 from temporalio.nexus import Info, logger
 from temporalio.service import RPCError, RPCStatusCode
+from temporalio.worker._payloads import _WorkerPayloadLimits
 
 from ._interceptor import (
     ExecuteNexusOperationCancelInput,
@@ -96,6 +96,10 @@ class _NexusWorker:  # type:ignore[reportUnusedClass]
 
         self._running_tasks: dict[bytes, _RunningNexusTask] = {}
         self._fail_worker_exception_queue: asyncio.Queue[Exception] = asyncio.Queue()
+
+    def set_payload_limits(self, limits: _WorkerPayloadLimits) -> None:
+        if limits:
+            self._data_converter = limits.apply_as_defaults(self._data_converter)
 
     async def run(self) -> None:
         """Continually poll for Nexus tasks and dispatch to handlers."""
@@ -166,7 +170,7 @@ class _NexusWorker:  # type:ignore[reportUnusedClass]
                 else:
                     raise NotImplementedError(f"Invalid Nexus task: {nexus_task}")
 
-            except PollShutdownError:
+            except temporalio.bridge.worker.PollShutdownError:  # type: ignore[reportPrivateLocalImportUsage]
                 exception_task.cancel()
                 return
 
@@ -184,7 +188,7 @@ class _NexusWorker:  # type:ignore[reportUnusedClass]
                 )
                 completion.error.failure.message = "Worker shutting down"
                 await self._bridge_worker().complete_nexus_task(completion)
-            except PollShutdownError:
+            except temporalio.bridge.worker.PollShutdownError:  # type: ignore[reportPrivateLocalImportUsage]
                 return
 
     # Only call this after run()/drain_poll_queue() have returned. This will not

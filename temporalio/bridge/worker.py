@@ -21,11 +21,11 @@ import temporalio.bridge.runtime
 import temporalio.bridge.temporal_sdk_bridge
 import temporalio.converter
 from temporalio.api.common.v1.message_pb2 import Payload
+from temporalio.api.namespace.v1.message_pb2 import NamespaceInfo
 from temporalio.bridge._visitor import VisitorFunctions
 from temporalio.bridge.temporal_sdk_bridge import (
     CustomSlotSupplier as BridgeCustomSlotSupplier,
 )
-from temporalio.bridge.temporal_sdk_bridge import PollShutdownError  # type: ignore
 from temporalio.worker._command_aware_visitor import CommandAwarePayloadVisitor
 
 
@@ -194,9 +194,10 @@ class Worker:
         """Create SDK core worker from a bridge worker."""
         self._ref = ref
 
-    async def validate(self) -> None:
+    async def validate(self) -> NamespaceInfo | None:
         """Validate the bridge worker."""
-        await self._ref.validate()  # type: ignore[reportOptionalMemberAccess]
+        bytes = await self._ref.validate()  # type: ignore[reportOptionalMemberAccess]
+        return NamespaceInfo.FromString(bytes) if bytes else None
 
     async def poll_workflow_activation(
         self,

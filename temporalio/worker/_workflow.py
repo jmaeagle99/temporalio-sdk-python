@@ -22,7 +22,7 @@ import temporalio.common
 import temporalio.converter
 import temporalio.exceptions
 import temporalio.workflow
-from temporalio.bridge.worker import PollShutdownError
+from temporalio.worker._payloads import _WorkerPayloadLimits
 
 from . import _command_aware_visitor
 from ._interceptor import (
@@ -162,6 +162,10 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
             else:
                 self._dynamic_workflow = defn
 
+    def set_payload_limits(self, limits: _WorkerPayloadLimits) -> None:
+        if limits:
+            self._data_converter = limits.apply_as_defaults(self._data_converter)
+
     async def run(self) -> None:
         # Continually poll for workflow work
         task_tag = object()
@@ -174,7 +178,7 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                 # when done.
                 task = asyncio.create_task(self._handle_activation(act))
                 setattr(task, "__temporal_task_tag", task_tag)
-        except PollShutdownError:
+        except temporalio.bridge.worker.PollShutdownError:  # type: ignore[reportPrivateLocalImportUsage]
             pass
         except Exception as err:
             raise RuntimeError("Workflow worker failed") from err
@@ -212,7 +216,7 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                 )
                 completion.failed.failure.message = "Worker shutting down"
                 await self._bridge_worker().complete_workflow_activation(completion)
-            except PollShutdownError:
+            except temporalio.bridge.worker.PollShutdownError:  # type: ignore[reportPrivateLocalImportUsage]
                 return
 
     async def _handle_activation(

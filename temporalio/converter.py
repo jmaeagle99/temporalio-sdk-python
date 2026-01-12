@@ -1228,6 +1228,27 @@ class DefaultFailureConverter(FailureConverter):
         return err
 
 
+@dataclass(frozen=True)
+class PayloadLimit:
+    size: int
+    disabled: bool
+
+
+@dataclass(frozen=True)
+class PayloadLimitsConfig:
+    payload_upload_error_limit: PayloadLimit | None = None
+    """The value at which a warning is emitted when the size of an uploadable payload collection exceeds it."""
+    payload_upload_warning_limit: PayloadLimit | None = None
+    """Option to disable the warning when the size of an uploadable payload collection exceeds the limit."""
+
+    default: ClassVar[PayloadLimitsConfig]
+    """Singleton default payload limits config."""
+
+
+class PayloadLimitError(temporalio.exceptions.TemporalError):
+    pass
+
+
 class DefaultFailureConverterWithEncodedAttributes(DefaultFailureConverter):
     """Implementation of :py:class:`DefaultFailureConverter` which moves message
     and stack trace to encoded attributes subject to a codec.
@@ -1261,6 +1282,11 @@ class DataConverter(WithSerializationContext):
     failure_converter: FailureConverter = dataclasses.field(init=False)
     """Failure converter created from the :py:attr:`failure_converter_class`."""
 
+    payload_limits: PayloadLimitsConfig = dataclasses.field(
+        default_factory=PayloadLimitsConfig
+    )
+    """Options for emitting diagnostics when the size of payloads exceed limits."""
+
     default: ClassVar[DataConverter]
     """Singleton default data converter."""
 
@@ -1282,10 +1308,35 @@ class DataConverter(WithSerializationContext):
             Converted and encoded payloads. Note, this does not have to be the
             same number as values given, but must be at least one and cannot be
             more than was given.
+
+        Raises:
+            PayloadLimitError when payloads size is above the error limit.
         """
         payloads = self.payload_converter.to_payloads(values)
         if self.payload_codec:
             payloads = await self.payload_codec.encode(payloads)
+
+        # Validate payloads size
+        if self.payload_limits:
+            payloads_size = sum(payload.ByteSize() for payload in payloads)
+            if (
+                self.payload_limits.payload_upload_error_limit
+                and not self.payload_limits.payload_upload_error_limit.disabled
+                and self.payload_limits.payload_upload_error_limit.size > 0
+                and payloads_size > self.payload_limits.payload_upload_error_limit.size
+            ):
+                logger.error("Payloads size exceeds error limit.")
+                raise PayloadLimitError()
+
+            if (
+                self.payload_limits.payload_upload_warning_limit
+                and not self.payload_limits.payload_upload_warning_limit.disabled
+                and self.payload_limits.payload_upload_warning_limit.size > 0
+                and payloads_size
+                > self.payload_limits.payload_upload_warning_limit.size
+            ):
+                logger.warning("Payloads size exceeds warn limit.")
+
         return payloads
 
     async def decode(
