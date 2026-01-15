@@ -43,6 +43,7 @@ import temporalio.api.failure.v1
 import temporalio.common
 import temporalio.exceptions
 import temporalio.types
+from temporalio.storage import ExternalStorageContext, ExternalStorageProvider
 
 if sys.version_info < (3, 11):
     # Python's datetime.fromisoformat doesn't support certain formats pre-3.11
@@ -1287,6 +1288,8 @@ class DataConverter(WithSerializationContext):
     )
     """Options for emitting diagnostics when the size of payloads exceed limits."""
 
+    external_storage: ExternalStorageProvider | None = None
+
     default: ClassVar[DataConverter]
     """Singleton default data converter."""
 
@@ -1313,6 +1316,19 @@ class DataConverter(WithSerializationContext):
             PayloadLimitError when payloads size is above the error limit.
         """
         payloads = self.payload_converter.to_payloads(values)
+
+        if self.external_storage:
+            stored_payloads = []
+            context = ExternalStorageContext(
+                payload_codec=self.payload_codec,
+                payload_converter=self.payload_converter,
+            )
+            for payload in payloads:
+                stored_payloads.append(
+                    await self.external_storage.store(context, payload)
+                )
+            payloads = stored_payloads
+
         if self.payload_codec:
             payloads = await self.payload_codec.encode(payloads)
 
@@ -1356,6 +1372,19 @@ class DataConverter(WithSerializationContext):
         """
         if self.payload_codec:
             payloads = await self.payload_codec.decode(payloads)
+
+        if self.external_storage:
+            retrieved_payloads = []
+            context = ExternalStorageContext(
+                payload_codec=self.payload_codec,
+                payload_converter=self.payload_converter,
+            )
+            for payload in payloads:
+                retrieved_payloads.append(
+                    await self.external_storage.retrieve(context, payload)
+                )
+            payloads = retrieved_payloads
+
         return self.payload_converter.from_payloads(payloads, type_hints)
 
     async def encode_wrapper(
