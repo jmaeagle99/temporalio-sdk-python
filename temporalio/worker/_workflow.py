@@ -268,22 +268,20 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                 workflow_id=workflow_id,
             )
             data_converter = self._data_converter.with_context(workflow_context)
-            if self._data_converter.payload_codec:
-                assert data_converter.payload_codec
-                if not workflow:
-                    payload_codec = data_converter.payload_codec
-                else:
-                    payload_codec = _CommandAwarePayloadCodec(
-                        workflow.instance,
-                        context_free_payload_codec=self._data_converter.payload_codec,
-                        workflow_context_payload_codec=data_converter.payload_codec,
-                        workflow_context=workflow_context,
-                    )
-                await temporalio.bridge.worker.decode_activation(
-                    act,
-                    payload_codec,
-                    decode_headers=self._encode_headers,
+            if not workflow:
+                payload_codec = data_converter._codec_chain
+            else:
+                payload_codec = _CommandAwarePayloadCodec(
+                    workflow.instance,
+                    context_free_payload_codec=self._data_converter._codec_chain,
+                    workflow_context_payload_codec=data_converter._codec_chain,
+                    workflow_context=workflow_context,
                 )
+            await temporalio.bridge.worker.decode_activation(
+                act,
+                payload_codec,
+                decode_headers=self._encode_headers,
+            )
             if not workflow:
                 assert init_job
                 workflow = _RunningWorkflow(
@@ -349,12 +347,11 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
         completion.run_id = act.run_id
 
         # Encode completion
-        if self._data_converter.payload_codec and workflow:
-            assert data_converter.payload_codec
+        if workflow:
             payload_codec = _CommandAwarePayloadCodec(
                 workflow.instance,
-                context_free_payload_codec=self._data_converter.payload_codec,
-                workflow_context_payload_codec=data_converter.payload_codec,
+                context_free_payload_codec=self._data_converter._codec_chain,
+                workflow_context_payload_codec=data_converter._codec_chain,
                 workflow_context=temporalio.converter.WorkflowSerializationContext(
                     namespace=self._namespace,
                     workflow_id=workflow.workflow_id,

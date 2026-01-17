@@ -28,6 +28,7 @@ from typing import (
     TypeVar,
     get_type_hints,
     overload,
+    override,
 )
 
 import google.protobuf.json_format
@@ -1239,6 +1240,105 @@ class DefaultFailureConverterWithEncodedAttributes(DefaultFailureConverter):
 
 
 @dataclass(frozen=True)
+class PayloadLimitsConfig:
+    """Configuration for when payload sizes exceed limits."""
+
+    payload_upload_error_limit: int | Literal["disabled"] | None = None
+    """The limit at which a payloads size error is created."""
+    payload_upload_warning_limit: int | Literal["disabled"] | None = None
+    """The limit at which a payloads size warning is created."""
+
+
+class PayloadLimitError(temporalio.exceptions.FailureError):
+    def __init__(self, message: str, context: Mapping[str, object]):
+        super().__init__(message)
+        self._context = context
+
+    @property
+    def context(self) -> Mapping[str, object]:
+        return self._context
+
+
+@dataclass(kw_only=True)
+class _PayloadLimitsPayloadCodec(PayloadCodec, WithSerializationContext):
+    config: PayloadLimitsConfig
+    context: SerializationContext | None = None
+    parent: PayloadCodec | None
+
+    @override
+    def with_context(self, context: SerializationContext) -> _PayloadLimitsPayloadCodec:
+        parent = self.parent
+        if isinstance(parent, WithSerializationContext):
+            parent = parent.with_context(context)
+
+        return _PayloadLimitsPayloadCodec(
+            config=self.config, context=context, parent=parent
+        )
+
+    @override
+    async def encode(
+        self, payloads: Sequence[temporalio.api.common.v1.Payload]
+    ) -> list[temporalio.api.common.v1.Payload]:
+        result_payloads = list(payloads)
+        if self.parent:
+            result_payloads = await self.parent.encode(payloads=result_payloads)
+
+        total_size = sum(payload.ByteSize() for payload in payloads)
+
+        limit_value = self._check_over_limit(
+            self.config.payload_upload_error_limit,
+            total_size,
+        )
+
+        if limit_value:
+            raise PayloadLimitError(
+                message="Payloads size has exceeded the error limit.",
+                context=self._create_extra(limit=limit_value, size=total_size),
+            )
+
+        limit_value = self._check_over_limit(
+            self.config.payload_upload_warning_limit,
+            total_size,
+        )
+
+        if limit_value:
+            logger.warning(
+                "Payloads size has exceeded the warning limit.",
+                extra=self._create_extra(limit=limit_value, size=total_size),
+            )
+
+        return list(result_payloads)
+
+    @override
+    async def decode(
+        self, payloads: Sequence[temporalio.api.common.v1.Payload]
+    ) -> list[temporalio.api.common.v1.Payload]:
+        result_payloads = list(payloads)
+        if self.parent:
+            result_payloads = await self.parent.decode(result_payloads)
+        return result_payloads
+
+    def _create_extra(self, limit: int, size: int) -> Mapping[str, object]:
+        extra: dict[str, object] = {"payloads-limit": limit, "payloads-size": size}
+        if isinstance(self.context, BaseWorkflowSerializationContext):
+            extra["workflow-id"] = self.context.workflow_id
+            extra["workflow-namespace"] = self.context.namespace
+        if isinstance(self.context, ActivitySerializationContext):
+            extra["workflow-type"] = self.context.workflow_type
+            extra["activity-type"] = self.context.activity_type
+        return extra
+
+    def _check_over_limit(
+        self,
+        limit: int | Literal["disabled"] | None,
+        size: int,
+    ) -> int | None:
+        if limit and limit != "disabled" and limit > 0 and size > limit:
+            return limit
+        return None
+
+
+@dataclass(frozen=True)
 class DataConverter(WithSerializationContext):
     """Data converter for converting and encoding payloads to/from Python values.
 
@@ -1261,12 +1361,25 @@ class DataConverter(WithSerializationContext):
     failure_converter: FailureConverter = dataclasses.field(init=False)
     """Failure converter created from the :py:attr:`failure_converter_class`."""
 
+    payload_limits: PayloadLimitsConfig = PayloadLimitsConfig()
+
+    _codec_chain: PayloadCodec = dataclasses.field(init=False)
+
     default: ClassVar[DataConverter]
     """Singleton default data converter."""
 
     def __post_init__(self) -> None:  # noqa: D105
         object.__setattr__(self, "payload_converter", self.payload_converter_class())
         object.__setattr__(self, "failure_converter", self.failure_converter_class())
+        object.__setattr__(
+            self,
+            "_codec_chain",
+            _PayloadLimitsPayloadCodec(
+                config=self.payload_limits,
+                context=None,
+                parent=self.payload_codec,
+            ),
+        )
 
     async def encode(
         self, values: Sequence[Any]
@@ -1284,8 +1397,8 @@ class DataConverter(WithSerializationContext):
             more than was given.
         """
         payloads = self.payload_converter.to_payloads(values)
-        if self.payload_codec:
-            payloads = await self.payload_codec.encode(payloads)
+        payloads = await self._codec_chain.encode(payloads)
+
         return payloads
 
     async def decode(
@@ -1303,8 +1416,7 @@ class DataConverter(WithSerializationContext):
         Returns:
             Decoded and converted values.
         """
-        if self.payload_codec:
-            payloads = await self.payload_codec.decode(payloads)
+        payloads = await self._codec_chain.decode(payloads)
         return self.payload_converter.from_payloads(payloads, type_hints)
 
     async def encode_wrapper(
@@ -1332,15 +1444,13 @@ class DataConverter(WithSerializationContext):
     ) -> None:
         """Convert and encode failure."""
         self.failure_converter.to_failure(exception, self.payload_converter, failure)
-        if self.payload_codec:
-            await self.payload_codec.encode_failure(failure)
+        await self._codec_chain.encode_failure(failure)
 
     async def decode_failure(
         self, failure: temporalio.api.failure.v1.Failure
     ) -> BaseException:
         """Decode and convert failure."""
-        if self.payload_codec:
-            await self.payload_codec.decode_failure(failure)
+        await self._codec_chain.decode_failure(failure)
         return self.failure_converter.from_failure(failure, self.payload_converter)
 
     def with_context(self, context: SerializationContext) -> Self:
@@ -1348,25 +1458,26 @@ class DataConverter(WithSerializationContext):
         payload_converter = self.payload_converter
         payload_codec = self.payload_codec
         failure_converter = self.failure_converter
+        codec_chain = self._codec_chain
         if isinstance(payload_converter, WithSerializationContext):
             payload_converter = payload_converter.with_context(context)
         if isinstance(payload_codec, WithSerializationContext):
             payload_codec = payload_codec.with_context(context)
         if isinstance(failure_converter, WithSerializationContext):
             failure_converter = failure_converter.with_context(context)
-        if all(
-            new is orig
-            for new, orig in [
-                (payload_converter, self.payload_converter),
-                (payload_codec, self.payload_codec),
-                (failure_converter, self.failure_converter),
-            ]
-        ):
-            return self
+        if isinstance(codec_chain, WithSerializationContext):
+            codec_chain = codec_chain.with_context(context)
         cloned = dataclasses.replace(self)
-        object.__setattr__(cloned, "payload_converter", payload_converter)
-        object.__setattr__(cloned, "payload_codec", payload_codec)
-        object.__setattr__(cloned, "failure_converter", failure_converter)
+        if payload_converter != self.payload_converter:
+            object.__setattr__(cloned, "payload_converter", payload_converter)
+        if payload_codec != self.payload_codec:
+            object.__setattr__(cloned, "payload_codec", payload_codec)
+        if failure_converter != self.failure_converter:
+            object.__setattr__(cloned, "failure_converter", failure_converter)
+        if codec_chain != self._codec_chain:
+            object.__setattr__(
+                cloned, "_codec_chain", codec_chain
+            )
         return cloned
 
 

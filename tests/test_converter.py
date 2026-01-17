@@ -574,7 +574,7 @@ async def test_failure_encoded_attributes():
     # Encode it and check encoded
     orig_failure = Failure()
     orig_failure.CopyFrom(failure)
-    await conv.payload_codec.encode_failure(failure)
+    await conv._codec_chain.encode_failure(failure)
     assert "encoding" not in failure.encoded_attributes.metadata
     assert "simple-codec" in failure.encoded_attributes.metadata
     assert (
@@ -585,7 +585,7 @@ async def test_failure_encoded_attributes():
     )
 
     # Decode and check
-    await conv.payload_codec.decode_failure(failure)
+    await conv._codec_chain.decode_failure(failure)
     assert "encoding" in failure.encoded_attributes.metadata
     assert "simple-codec" not in failure.encoded_attributes.metadata
     assert "encoding" in failure.application_failure_info.details.payloads[0].metadata

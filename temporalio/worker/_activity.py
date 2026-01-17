@@ -380,6 +380,26 @@ class _ActivityWorker:
                         temporalio.exceptions.CancelledError("Cancelled"),
                         completion.result.cancelled.failure,
                     )
+                elif isinstance(
+                    err,
+                    temporalio.converter.PayloadLimitError,
+                ):
+                    extra: dict[str, object] = {
+                        "__temporal_error_identifier": "ActivityFailure"
+                    }
+                    extra.update(err.context)
+
+                    temporalio.activity.logger.warning(
+                        "Completing as failed due to payloads size exceeding the error limit.",
+                        extra=extra,
+                    )
+                    await data_converter.encode_failure(
+                        temporalio.exceptions.ApplicationError(
+                            type="PayloadsTooLarge",
+                            message="Payloads exceeded the error limit.",
+                        ),
+                        completion.result.failed.failure,
+                    )
                 else:
                     if (
                         isinstance(
@@ -577,9 +597,11 @@ class _ActivityWorker:
             else None,
         )
 
-        if self._encode_headers and data_converter.payload_codec is not None:
+        if self._encode_headers:
             for payload in start.header_fields.values():
-                new_payload = (await data_converter.payload_codec.decode([payload]))[0]
+                new_payload = (
+                    await data_converter._codec_chain.decode([payload])
+                )[0]
                 payload.CopyFrom(new_payload)
 
         running_activity.info = info

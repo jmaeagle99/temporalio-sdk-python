@@ -25,7 +25,9 @@ from temporalio.bridge._visitor import VisitorFunctions
 from temporalio.bridge.temporal_sdk_bridge import (
     CustomSlotSupplier as BridgeCustomSlotSupplier,
 )
-from temporalio.bridge.temporal_sdk_bridge import PollShutdownError  # type: ignore
+from temporalio.bridge.temporal_sdk_bridge import (
+    PollShutdownError,  # noqa
+)
 from temporalio.worker._command_aware_visitor import CommandAwarePayloadVisitor
 
 

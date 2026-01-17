@@ -88,6 +88,7 @@ from temporalio.converter import (
     DefaultPayloadConverter,
     PayloadCodec,
     PayloadConverter,
+    PayloadLimitsConfig,
 )
 from temporalio.exceptions import (
     ActivityError,
@@ -8434,3 +8435,77 @@ async def test_activity_failure_with_encoded_payload_is_decoded_in_workflow(
             run_timeout=timedelta(seconds=5),
         )
         assert result == "Handled encrypted failure successfully"
+
+
+@dataclass
+class LargePayloadWorkflowInput:
+    activity_input_data_size: int
+    activity_output_data_size: int
+    workflow_output_data_size: int
+    data: list[int]
+
+
+@dataclass
+class LargePayloadWorkflowOutput:
+    data: list[int]
+
+
+@dataclass
+class LargePayloadActivityInput:
+    output_data_size: int
+    data: list[int]
+
+
+@dataclass
+class LargePayloadActivityOutput:
+    data: list[int]
+
+
+@activity.defn
+async def large_payload_activity(
+    input: LargePayloadActivityInput,
+) -> LargePayloadActivityOutput:
+    return LargePayloadActivityOutput(data=[0] * input.output_data_size)
+
+
+@workflow.defn
+class LargePayloadWorkflow:
+    @workflow.run
+    async def run(self, input: LargePayloadWorkflowInput) -> LargePayloadWorkflowOutput:
+        await workflow.execute_activity(
+            large_payload_activity,
+            LargePayloadActivityInput(
+                output_data_size=input.activity_output_data_size,
+                data=[0] * input.activity_input_data_size,
+            ),
+            schedule_to_close_timeout=timedelta(seconds=5),
+            summary="Do a thing",
+        )
+        return LargePayloadWorkflowOutput(data=[0] * input.workflow_output_data_size)
+
+
+async def test_workflow_activity_result_limit_error(client: Client):
+    config = client.config()
+    config["data_converter"] = dataclasses.replace(
+        temporalio.converter.default(),
+        payload_limits=PayloadLimitsConfig(payload_upload_error_limit=5 * 1024),
+    )
+    worker_client = Client(**config)
+
+    async with new_worker(
+        worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
+    ) as worker:
+        with pytest.raises(WorkflowFailureError) as err:
+            await client.execute_workflow(
+                LargePayloadWorkflow.run,
+                LargePayloadWorkflowInput(
+                    activity_input_data_size=0,
+                    activity_output_data_size=6 * 1024,
+                    workflow_output_data_size=0,
+                    data=[],
+                ),
+                id=f"workflow-{uuid.uuid4()}",
+                task_queue=worker.task_queue,
+            )
+        assert isinstance(err.value.cause, ActivityError)
+        assert isinstance(err.value.cause.cause, ApplicationError)

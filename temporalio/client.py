@@ -4249,7 +4249,7 @@ class ScheduleActionStartWorkflow(ScheduleAction):
                 client.config(active_config=True)["header_codec_behavior"]
                 == HeaderCodecBehavior.CODEC
                 and not self._from_raw,
-                client.data_converter.payload_codec,
+                client.data_converter._codec_chain,
             )
         return action
 
@@ -6870,7 +6870,7 @@ class _ClientImpl(OutboundInterceptor):
             dest,
             self._client.config(active_config=True)["header_codec_behavior"]
             == HeaderCodecBehavior.CODEC,
-            self._client.data_converter.payload_codec,
+            self._client.data_converter._codec_chain,
         )
 
 
