@@ -1208,6 +1208,21 @@ class DefaultFailureConverterWithEncodedAttributes(DefaultFailureConverter):
 
 
 @dataclass(frozen=True)
+class PayloadLimitsConfig:
+    """Configuration for when payload sizes exceed limits."""
+
+    memo_size_warning: int = 2 * 1024
+    """The limit (in bytes) at which a memo size warning is logged."""
+
+    payload_size_warning: int = 512 * 1024
+    """The limit (in bytes) at which a payload size warning is logged."""
+
+
+class PayloadSizeWarning(RuntimeWarning):
+    """The size of payloads is above the warning limit."""
+
+
+@dataclass(frozen=True)
 class DataConverter(WithSerializationContext):
     """Data converter for converting and encoding payloads to/from Python values.
 
@@ -1229,6 +1244,9 @@ class DataConverter(WithSerializationContext):
 
     failure_converter: FailureConverter = dataclasses.field(init=False)
     """Failure converter created from the :py:attr:`failure_converter_class`."""
+
+    payload_limits: PayloadLimitsConfig = PayloadLimitsConfig()
+    """Settings for payload size limits."""
 
     default: ClassVar[DataConverter]
     """Singleton default data converter."""
