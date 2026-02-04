@@ -8725,7 +8725,7 @@ async def test_large_payload_workflow_result_warning(client: Client):
     config["data_converter"] = dataclasses.replace(
         temporalio.converter.default(),
         payload_limits=PayloadLimitsConfig(
-            payload_size_warning=1024,
+            payload_size_warning=128,
         ),
     )
     worker_client = Client(**config)
@@ -8740,7 +8740,7 @@ async def test_large_payload_workflow_result_warning(client: Client):
                     activity_input_data_size=0,
                     activity_output_data_size=0,
                     activity_exception_data_size=0,
-                    workflow_output_data_size=2 * 1024,
+                    workflow_output_data_size=256,
                     data="",
                 ),
                 id=f"workflow-{uuid.uuid4()}",
@@ -8830,7 +8830,7 @@ async def test_large_payload_activity_input_warning(client: Client):
     config["data_converter"] = dataclasses.replace(
         temporalio.converter.default(),
         payload_limits=PayloadLimitsConfig(
-            payload_size_warning=1024,
+            payload_size_warning=128,
         ),
     )
     worker_client = Client(**config)
@@ -8842,7 +8842,7 @@ async def test_large_payload_activity_input_warning(client: Client):
             await client.execute_workflow(
                 LargePayloadWorkflow.run,
                 LargePayloadWorkflowInput(
-                    activity_input_data_size=2 * 1024,
+                    activity_input_data_size=256,
                     activity_output_data_size=0,
                     activity_exception_data_size=0,
                     workflow_output_data_size=0,
@@ -8989,7 +8989,7 @@ async def test_large_payload_activity_result_warning(client: Client):
     config["data_converter"] = dataclasses.replace(
         temporalio.converter.default(),
         payload_limits=PayloadLimitsConfig(
-            payload_size_warning=1024,
+            payload_size_warning=128,
         ),
     )
     worker_client = Client(**config)
@@ -9002,7 +9002,7 @@ async def test_large_payload_activity_result_warning(client: Client):
                 LargePayloadWorkflow.run,
                 LargePayloadWorkflowInput(
                     activity_input_data_size=0,
-                    activity_output_data_size=2 * 1024,
+                    activity_output_data_size=256,
                     activity_exception_data_size=0,
                     workflow_output_data_size=0,
                     data="",
