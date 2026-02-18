@@ -234,6 +234,11 @@ class RawValue:
         )
 
 
+@dataclass(frozen=True)
+class PayloadHandle:
+    pass
+
+
 # We choose to make this a list instead of an sequence so we can catch if people
 # are not sending lists each time but maybe accidentally sending a string (which
 # is a sequence)

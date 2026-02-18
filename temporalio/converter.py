@@ -21,6 +21,7 @@ from enum import IntEnum
 from itertools import zip_longest
 from logging import getLogger
 from typing import (
+    TYPE_CHECKING,
     Any,
     ClassVar,
     Literal,
@@ -43,6 +44,9 @@ import temporalio.api.failure.v1
 import temporalio.common
 import temporalio.exceptions
 import temporalio.types
+
+if TYPE_CHECKING:
+    from temporalio.extstore import ExternalStorageOptions
 
 if sys.version_info < (3, 11):
     # Python's datetime.fromisoformat doesn't support certain formats pre-3.11
@@ -1263,6 +1267,107 @@ class _ServerPayloadErrorLimits:
     """The limit (in bytes) at which a payload size error is raised."""
 
 
+class _PayloadMiddleware(ABC):
+    @abstractmethod
+    async def encode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        raise NotImplementedError("encode not implemented")
+
+    @abstractmethod
+    async def decode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        raise NotImplementedError("decode not implemented")
+
+
+class _PassthroughPayloadMiddleware(_PayloadMiddleware):
+    async def encode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        return list(payloads)
+
+    async def decode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        return list(payloads)
+
+
+class _CodecPayloadMiddleware(_PayloadMiddleware):
+    def __init__(self, next_middleware: _PayloadMiddleware, payload_code: PayloadCodec):
+        self._next_middleware = next_middleware
+        self._payload_codec = payload_code
+
+    async def encode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        return await self._payload_codec.encode(
+            await self._next_middleware.encode(payloads)
+        )
+
+    async def decode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        return await self._payload_codec.decode(
+            await self._next_middleware.decode(payloads)
+        )
+
+
+class _HandlePayloadMiddleware(_PayloadMiddleware):
+    def __init__(self, next_middleware: _PayloadMiddleware):
+        self._next_middleware = next_middleware
+
+    async def encode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        return await self._next_middleware.encode(payloads)
+
+    async def decode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        return await self._next_middleware.decode(payloads)
+
+
+class _LimitsPayloadMiddleware(_PayloadMiddleware):
+    def __init__(
+        self,
+        next_middleware: _PayloadMiddleware,
+        warn_limits: PayloadLimitsConfig,
+        error_limits: _ServerPayloadErrorLimits | None,
+    ):
+        self._next_middleware = next_middleware
+        self._warn_limits = warn_limits
+        self._error_limits = error_limits
+
+    async def encode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        payloads = await self._next_middleware.encode(payloads)
+        DataConverter._validate_limits(
+            payloads,
+            self._error_limits.payload_size_error if self._error_limits else None,
+            "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit.",
+            self._warn_limits.payload_size_warning,
+            "[TMPRL1103] Attempted to upload payloads with size that exceeded the warning limit.",
+        )
+        return payloads
+
+    async def decode(
+        self,
+        payloads: Sequence[temporalio.api.common.v1.Payload],
+    ) -> list[temporalio.api.common.v1.Payload]:
+        return await self._next_middleware.decode(payloads)
+
+
 @dataclass(frozen=True)
 class DataConverter(WithSerializationContext):
     """Data converter for converting and encoding payloads to/from Python values.
@@ -1289,8 +1394,13 @@ class DataConverter(WithSerializationContext):
     payload_limits: PayloadLimitsConfig = PayloadLimitsConfig()
     """Settings for payload size limits."""
 
+    external_storage: ExternalStorageOptions | None = None
+    """Options for external storage. If None, external storage is disabled."""
+
     default: ClassVar[DataConverter]
     """Singleton default data converter."""
+
+    _payload_middleware: _PayloadMiddleware = _PassthroughPayloadMiddleware()
 
     _payload_error_limits: _ServerPayloadErrorLimits | None = None
     """Server-reported limits for payloads."""
@@ -1298,13 +1408,15 @@ class DataConverter(WithSerializationContext):
     def __post_init__(self) -> None:  # noqa: D105
         object.__setattr__(self, "payload_converter", self.payload_converter_class())
         object.__setattr__(self, "failure_converter", self.failure_converter_class())
+        self._rebuild_payload_middleware()
 
     async def encode(
         self, values: Sequence[Any]
     ) -> list[temporalio.api.common.v1.Payload]:
         """Encode values into payloads.
 
-        First converts values to payloads then encodes payloads using codec.
+        Executes 4-layer pipeline: PayloadConverter → PayloadCodec →
+        ExternalStorage → PayloadLimits.
 
         Args:
             values: Values to be converted and encoded.
@@ -1315,8 +1427,8 @@ class DataConverter(WithSerializationContext):
             more than was given.
         """
         payloads = self.payload_converter.to_payloads(values)
-        payloads = await self._encode_payload_sequence(payloads)
-        return payloads
+
+        return await self._payload_middleware.encode(payloads)
 
     async def decode(
         self,
@@ -1325,7 +1437,8 @@ class DataConverter(WithSerializationContext):
     ) -> list[Any]:
         """Decode payloads into values.
 
-        First decodes payloads using codec then converts payloads to values.
+        Executes 4-layer pipeline (reverse): ExternalStorage → PayloadCodec →
+        PayloadConverter.
 
         Args:
             payloads: Payloads to be decoded and converted.
@@ -1333,8 +1446,9 @@ class DataConverter(WithSerializationContext):
         Returns:
             Decoded and converted values.
         """
-        payloads = await self._decode_payload_sequence(payloads)
-        return self.payload_converter.from_payloads(payloads, type_hints)
+        decoded_payloads = await self._payload_middleware.decode(payloads)
+
+        return self.payload_converter.from_payloads(decoded_payloads, type_hints)
 
     async def encode_wrapper(
         self, values: Sequence[Any]
@@ -1375,12 +1489,14 @@ class DataConverter(WithSerializationContext):
         payload_converter = self.payload_converter
         payload_codec = self.payload_codec
         failure_converter = self.failure_converter
+
         if isinstance(payload_converter, WithSerializationContext):
             payload_converter = payload_converter.with_context(context)
         if isinstance(payload_codec, WithSerializationContext):
             payload_codec = payload_codec.with_context(context)
         if isinstance(failure_converter, WithSerializationContext):
             failure_converter = failure_converter.with_context(context)
+
         if all(
             new is orig
             for new, orig in [
@@ -1390,16 +1506,40 @@ class DataConverter(WithSerializationContext):
             ]
         ):
             return self
+
         cloned = dataclasses.replace(self)
         object.__setattr__(cloned, "payload_converter", payload_converter)
         object.__setattr__(cloned, "payload_codec", payload_codec)
         object.__setattr__(cloned, "failure_converter", failure_converter)
+        cloned._rebuild_payload_middleware()
         return cloned
+
+    def _rebuild_payload_middleware(self):
+        payload_middleware: _PayloadMiddleware = _PassthroughPayloadMiddleware()
+        if self.payload_codec is not None:
+            payload_middleware = _CodecPayloadMiddleware(
+                payload_middleware, self.payload_codec
+            )
+        if self.external_storage is not None:
+            # Late import to avoid circular dependency
+            from temporalio.extstore import _AddExternalStorageMiddleware
+
+            payload_middleware = _AddExternalStorageMiddleware(
+                payload_middleware, self.external_storage
+            )
+        payload_middleware = _LimitsPayloadMiddleware(
+            _HandlePayloadMiddleware(payload_middleware),
+            self.payload_limits,
+            self._payload_error_limits,
+        )
+        object.__setattr__(self, "_payload_middleware", payload_middleware)
 
     def _with_payload_error_limits(
         self, limits: _ServerPayloadErrorLimits | None
     ) -> DataConverter:
-        return dataclasses.replace(self, _payload_error_limits=limits)
+        cloned = dataclasses.replace(self, _payload_error_limits=limits)
+        cloned._rebuild_payload_middleware()
+        return cloned
 
     async def _decode_memo(
         self,
@@ -1453,48 +1593,32 @@ class DataConverter(WithSerializationContext):
     async def _encode_payload(
         self, payload: temporalio.api.common.v1.Payload
     ) -> temporalio.api.common.v1.Payload:
-        if self.payload_codec:
-            payload = (await self.payload_codec.encode([payload]))[0]
-        self._validate_payload_limits([payload])
-        return payload
+        return (await self._payload_middleware.encode([payload]))[0]
 
     async def _encode_payloads(self, payloads: temporalio.api.common.v1.Payloads):
-        if self.payload_codec:
-            await self.payload_codec.encode_wrapper(payloads)
-        self._validate_payload_limits(payloads.payloads)
+        encoded_payloads = await self._payload_middleware.encode(payloads.payloads)
+        del payloads.payloads[:]
+        payloads.payloads.extend(encoded_payloads)
 
     async def _encode_payload_sequence(
         self, payloads: Sequence[temporalio.api.common.v1.Payload]
     ) -> list[temporalio.api.common.v1.Payload]:
-        encoded_payloads = list(payloads)
-        if self.payload_codec:
-            encoded_payloads = await self.payload_codec.encode(encoded_payloads)
-        self._validate_payload_limits(encoded_payloads)
-        return encoded_payloads
+        return await self._payload_middleware.encode(payloads)
 
     async def _decode_payload(
         self, payload: temporalio.api.common.v1.Payload
     ) -> temporalio.api.common.v1.Payload:
-        if self.payload_codec:
-            payload = (await self.payload_codec.decode([payload]))[0]
-        return payload
+        return (await self._payload_middleware.decode([payload]))[0]
 
     async def _decode_payloads(self, payloads: temporalio.api.common.v1.Payloads):
-        if self.payload_codec:
-            await self.payload_codec.decode_wrapper(payloads)
+        decoded_payloads = await self._payload_middleware.decode(payloads.payloads)
+        del payloads.payloads[:]
+        payloads.payloads.extend(decoded_payloads)
 
     async def _decode_payload_sequence(
         self, payloads: Sequence[temporalio.api.common.v1.Payload]
     ) -> list[temporalio.api.common.v1.Payload]:
-        if not self.payload_codec:
-            return list(payloads)
-        return await self.payload_codec.decode(payloads)
-
-    # Temporary shortcircuit detection while the _decode_* methods may no-op if
-    # a payload codec is not configured. Remove once those paths have more to them.
-    @property
-    def _decode_payload_has_effect(self) -> bool:
-        return self.payload_codec is not None
+        return await self._payload_middleware.decode(payloads)
 
     @staticmethod
     async def _apply_to_failure_payloads(
@@ -1526,20 +1650,6 @@ class DataConverter(WithSerializationContext):
             await cb(failure.reset_workflow_failure_info.last_heartbeat_details)
         if failure.HasField("cause"):
             await DataConverter._apply_to_failure_payloads(failure.cause, cb)
-
-    def _validate_payload_limits(
-        self,
-        payloads: Sequence[temporalio.api.common.v1.Payload],
-    ):
-        DataConverter._validate_limits(
-            payloads,
-            self._payload_error_limits.payload_size_error
-            if self._payload_error_limits
-            else None,
-            "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit.",
-            self.payload_limits.payload_size_warning,
-            "[TMPRL1103] Attempted to upload payloads with size that exceeded the warning limit.",
-        )
 
     @staticmethod
     def _validate_limits(
