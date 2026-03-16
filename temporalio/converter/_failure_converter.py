@@ -16,7 +16,6 @@ import temporalio.api.common.v1
 import temporalio.api.enums.v1
 import temporalio.api.failure.v1
 import temporalio.exceptions
-
 from temporalio.converter._payload_converter import PayloadConverter
 from temporalio.converter._payload_limits import _PayloadSizeError
 

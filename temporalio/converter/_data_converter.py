@@ -14,8 +14,6 @@ from typing_extensions import Self
 import temporalio.api.common.v1
 import temporalio.api.failure.v1
 import temporalio.common
-import temporalio.exceptions
-
 from temporalio.converter._failure_converter import (
     DefaultFailureConverter,
     FailureConverter,

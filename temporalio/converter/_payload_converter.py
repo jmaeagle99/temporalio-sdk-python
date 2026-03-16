@@ -23,7 +23,6 @@ from typing import (
     ClassVar,
     Literal,
     NewType,
-    Self,
     TypeVar,
     get_type_hints,
     overload,
@@ -33,6 +32,7 @@ import google.protobuf.json_format
 import google.protobuf.message
 import google.protobuf.symbol_database
 import typing_extensions
+from typing_extensions import Self
 
 import temporalio.api.common.v1
 import temporalio.common

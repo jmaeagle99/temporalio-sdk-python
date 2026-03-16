@@ -22,7 +22,7 @@ class PayloadSizeWarning(RuntimeWarning):
     """The size of payloads is above the warning limit."""
 
 
-class _PayloadSizeError(temporalio.exceptions.TemporalError):
+class _PayloadSizeError(temporalio.exceptions.TemporalError):  # type:ignore[reportUnusedClass]
     """Error raised when payloads size exceeds payload size limits."""
 
     def __init__(self, message: str):
@@ -37,7 +37,7 @@ class _PayloadSizeError(temporalio.exceptions.TemporalError):
 
 
 @dataclass(frozen=True)
-class _ServerPayloadErrorLimits:
+class _ServerPayloadErrorLimits:  # type:ignore[reportUnusedClass]
     """Error limits for payloads as described by the Temporal server."""
 
     memo_size_error: int

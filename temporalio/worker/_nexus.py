@@ -96,7 +96,8 @@ class _NexusWorker:  # type:ignore[reportUnusedClass]
 
     async def run(
         self,
-        payload_error_limits: temporalio.converter._payload_limits._ServerPayloadErrorLimits | None,
+        payload_error_limits: temporalio.converter._payload_limits._ServerPayloadErrorLimits
+        | None,
     ) -> None:
         """Continually poll for Nexus tasks and dispatch to handlers."""
         self._data_converter = self._data_converter._with_payload_error_limits(

@@ -167,7 +167,8 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
 
     async def run(
         self,
-        payload_error_limits: temporalio.converter._payload_limits._ServerPayloadErrorLimits | None,
+        payload_error_limits: temporalio.converter._payload_limits._ServerPayloadErrorLimits
+        | None,
     ) -> None:
         self._data_converter = self._data_converter._with_payload_error_limits(
             payload_error_limits

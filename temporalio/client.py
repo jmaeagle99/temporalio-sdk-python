@@ -4434,7 +4434,9 @@ class ActivityExecutionCountAggregationGroup:
         return ActivityExecutionCountAggregationGroup(
             count=raw.count,
             group_values=[
-                temporalio.converter._search_attributes._decode_search_attribute_value(v)
+                temporalio.converter._search_attributes._decode_search_attribute_value(
+                    v
+                )
                 for v in raw.group_values
             ],
         )
@@ -5128,7 +5130,9 @@ class WorkflowExecutionCountAggregationGroup:
         return WorkflowExecutionCountAggregationGroup(
             count=raw.count,
             group_values=[
-                temporalio.converter._search_attributes._decode_search_attribute_value(v)
+                temporalio.converter._search_attributes._decode_search_attribute_value(
+                    v
+                )
                 for v in raw.group_values
             ],
         )
