@@ -7,7 +7,7 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import Self
 
@@ -15,7 +15,6 @@ import temporalio.api.common.v1
 import temporalio.api.failure.v1
 import temporalio.common
 from temporalio.converter._failure_converter import (
-    DefaultFailureConverter,
     FailureConverter,
 )
 from temporalio.converter._payload_codec import (
@@ -23,7 +22,6 @@ from temporalio.converter._payload_codec import (
     _apply_to_failure_payloads,
 )
 from temporalio.converter._payload_converter import (
-    DefaultPayloadConverter,
     PayloadConverter,
 )
 from temporalio.converter._payload_limits import (
@@ -36,6 +34,14 @@ from temporalio.converter._serialization_context import (
     SerializationContext,
     WithSerializationContext,
 )
+
+# Import defaults from public API to avoid pydoctor cross-reference issues
+if TYPE_CHECKING:
+    from temporalio.converter import DefaultFailureConverter, DefaultPayloadConverter
+else:
+    # Import from private modules for runtime to avoid circular imports
+    from temporalio.converter._failure_converter import DefaultFailureConverter
+    from temporalio.converter._payload_converter import DefaultPayloadConverter
 
 logger = getLogger("temporalio.converter")
 
