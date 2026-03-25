@@ -80,10 +80,8 @@ class Aioboto3StorageDriverClient(S3StorageDriverClient):
         return await response["Body"].read()  # type: ignore[no-any-return]
 
 
-def new_aioboto3_client(client: S3Client) -> Aioboto3StorageDriverClient:
+def new_aioboto3_client(client: S3Client) -> S3StorageDriverClient:
     """Create an :class:`S3StorageDriverClient` from an aioboto3 S3 client.
-
-    This is a convenience factory. Equivalent to ``Aioboto3StorageDriverClient(client)``.
 
     Args:
         client: An aioboto3 S3 client, typically obtained from
