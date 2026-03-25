@@ -10,15 +10,12 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import socket
-import urllib.request
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import aioboto3
 import pytest
-from moto.server import ThreadedMotoServer
 from types_aiobotocore_s3.client import S3Client
 
 import temporalio.converter
@@ -27,8 +24,8 @@ from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
 from temporalio.converter import ExternalStorage, JSONPlainPayloadConverter
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
-from tests.helpers import new_worker
-from tests.worker._s3driver_workflows import (
+from tests.contrib.aws.s3driver.conftest import BUCKET, REGION
+from tests.contrib.aws.s3driver.workflows import (
     LARGE,
     ChildWorkflow,
     DocumentIngestionWorkflow,
@@ -45,13 +42,12 @@ from tests.worker._s3driver_workflows import (
     large_io_activity,
     large_output_activity,
 )
+from tests.helpers import new_worker
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_BUCKET = "test-bucket"
-_REGION = "us-east-1"
 _THRESHOLD = 256  # bytes — low so all test payloads are offloaded
 
 # ---------------------------------------------------------------------------
@@ -59,49 +55,12 @@ _THRESHOLD = 256  # bytes — low so all test payloads are offloaded
 # ---------------------------------------------------------------------------
 
 
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture(scope="session")
-def moto_server_url() -> Iterator[str]:
-    port = _find_free_port()
-    server = ThreadedMotoServer(port=port)
-    server.start()
-    yield f"http://127.0.0.1:{port}"
-    server.stop()
-
-
-@pytest.fixture
-async def aioboto3_client(moto_server_url: str) -> AsyncIterator[S3Client]:
-    """Fresh aioboto3 S3 client; moto state is reset before each test."""
-    urllib.request.urlopen(
-        urllib.request.Request(
-            f"{moto_server_url}/moto-api/reset", method="POST", data=b""
-        )
-    )
-    session = aioboto3.Session()
-    async with session.client(
-        "s3",
-        region_name=_REGION,
-        endpoint_url=moto_server_url,
-        aws_access_key_id="testing",
-        aws_secret_access_key="testing",
-    ) as client:
-        await client.create_bucket(Bucket=_BUCKET)
-        yield client
-
-
 @pytest.fixture
 async def tmprl_client(
     env: WorkflowEnvironment, aioboto3_client: S3Client
 ) -> AsyncIterator[Client]:
     """Temporal client wired with ExternalStorage backed by the moto S3 server."""
-    driver = S3StorageDriver(
-        client=new_aioboto3_client(aioboto3_client), bucket=_BUCKET
-    )
+    driver = S3StorageDriver(client=new_aioboto3_client(aioboto3_client), bucket=BUCKET)
     yield await Client.connect(
         env.client.service_client.config.target_host,
         namespace=env.client.namespace,
@@ -121,7 +80,7 @@ async def tmprl_client(
 
 
 async def _list_keys(aioboto3_client: S3Client) -> list[str]:
-    resp = await aioboto3_client.list_objects_v2(Bucket=_BUCKET)
+    resp = await aioboto3_client.list_objects_v2(Bucket=BUCKET)
     return sorted(
         key for obj in resp.get("Contents", []) if (key := obj.get("Key")) is not None
     )
@@ -408,7 +367,7 @@ async def test_s3_store_failure_surfaces_in_workflow_history(
     session = aioboto3.Session()
     async with session.client(
         "s3",
-        region_name=_REGION,
+        region_name=REGION,
         endpoint_url=moto_server_url,
         aws_access_key_id="testing",
         aws_secret_access_key="testing",

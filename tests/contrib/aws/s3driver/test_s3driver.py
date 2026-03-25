@@ -12,24 +12,19 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import socket
-import urllib.request
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine
 from functools import wraps
 from typing import Any
 from unittest.mock import MagicMock
 
-import aioboto3
 import pytest
 from botocore.exceptions import ClientError
-from moto.server import ThreadedMotoServer
 from types_aiobotocore_s3.client import S3Client
 
 from temporalio.api.common.v1 import Payload
 from temporalio.contrib.aws.s3driver import (
     S3StorageDriver,
     S3StorageDriverClient,
-    new_aioboto3_client,
 )
 from temporalio.converter import (
     ActivitySerializationContext,
@@ -39,9 +34,8 @@ from temporalio.converter import (
     StorageDriverStoreContext,
     WorkflowSerializationContext,
 )
+from tests.contrib.aws.s3driver.conftest import BUCKET
 
-_BUCKET = "test-bucket"
-_REGION = "us-east-1"
 _CONVERTER = JSONPlainPayloadConverter()
 
 
@@ -88,55 +82,9 @@ def make_activity_context(
     )
 
 
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def moto_server_url() -> Iterator[str]:
-    """Start a moto S3 server for the test session and yield its base URL."""
-    port = _find_free_port()
-    server = ThreadedMotoServer(port=port)
-    server.start()
-    yield f"http://127.0.0.1:{port}"
-    server.stop()
-
-
-@pytest.fixture
-async def aioboto3_client(moto_server_url: str) -> AsyncIterator[S3Client]:
-    """Yield an aioboto3 S3 client pointed at the moto server.
-
-    Resets all moto state before each test to guarantee isolation, then
-    pre-creates the standard test bucket.
-    """
-    urllib.request.urlopen(
-        urllib.request.Request(
-            f"{moto_server_url}/moto-api/reset", method="POST", data=b""
-        )
-    )
-    session = aioboto3.Session()
-    async with session.client(
-        "s3",
-        region_name=_REGION,
-        endpoint_url=moto_server_url,
-        aws_access_key_id="testing",
-        aws_secret_access_key="testing",
-    ) as client:
-        await client.create_bucket(Bucket=_BUCKET)
-        yield client
-
-
-@pytest.fixture
-def driver_client(aioboto3_client: S3Client) -> S3StorageDriverClient:
-    """Wrap the aioboto3 S3 client in an S3StorageDriverClient adapter."""
-    return new_aioboto3_client(aioboto3_client)
 
 
 class CountingDriverClient(S3StorageDriverClient):
@@ -226,21 +174,21 @@ def counting_driver_client(
 class TestS3StorageDriverInit:
     def test_default_name(self) -> None:
         driver = S3StorageDriver(
-            client=MagicMock(spec=S3StorageDriverClient), bucket=_BUCKET
+            client=MagicMock(spec=S3StorageDriverClient), bucket=BUCKET
         )
         assert driver.name() == "aws.s3driver"
 
     def test_custom_name(self) -> None:
         driver = S3StorageDriver(
             client=MagicMock(spec=S3StorageDriverClient),
-            bucket=_BUCKET,
+            bucket=BUCKET,
             driver_name="my-s3",
         )
         assert driver.name() == "my-s3"
 
     def test_type(self) -> None:
         driver = S3StorageDriver(
-            client=MagicMock(spec=S3StorageDriverClient), bucket=_BUCKET
+            client=MagicMock(spec=S3StorageDriverClient), bucket=BUCKET
         )
         assert driver.type() == "aws.s3driver"
 
@@ -252,7 +200,7 @@ class TestS3StorageDriverInit:
 
 class TestS3StorageDriverKeyConstruction:
     async def test_key_context_none(self, driver_client: S3StorageDriverClient) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         [claim] = await driver.store(make_store_context(), [payload])
         expected_hash = hashlib.sha256(payload.SerializeToString()).hexdigest()
@@ -261,7 +209,7 @@ class TestS3StorageDriverKeyConstruction:
     async def test_key_context_workflow(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_workflow_context(namespace="ns1", workflow_id="wf1")
@@ -274,7 +222,7 @@ class TestS3StorageDriverKeyConstruction:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         """workflow_id takes priority over activity_id in ActivitySerializationContext."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_activity_context(
@@ -288,7 +236,7 @@ class TestS3StorageDriverKeyConstruction:
     async def test_key_context_standalone_activityt(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_activity_context(namespace="ns1", activity_id="act1", workflow_id=None)
@@ -300,7 +248,7 @@ class TestS3StorageDriverKeyConstruction:
     async def test_key_case_sensitivity(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_workflow_context(namespace="MyNamespace", workflow_id="MyWorkflow")
@@ -315,7 +263,7 @@ class TestS3StorageDriverKeyConstruction:
     async def test_key_urlencodes_workflow_id_with_slashes(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_workflow_context(namespace="ns1", workflow_id="order/123/v2")
@@ -330,7 +278,7 @@ class TestS3StorageDriverKeyConstruction:
     async def test_key_urlencodes_workflow_id_with_special_chars(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_workflow_context(namespace="ns1", workflow_id="wf#1 &foo=bar")
@@ -345,7 +293,7 @@ class TestS3StorageDriverKeyConstruction:
     async def test_key_urlencodes_activity_id(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_activity_context(
@@ -362,7 +310,7 @@ class TestS3StorageDriverKeyConstruction:
     async def test_key_urlencodes_namespace(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         ctx = make_store_context(
             make_workflow_context(namespace="my/ns#1", workflow_id="wf1")
@@ -378,7 +326,7 @@ class TestS3StorageDriverKeyConstruction:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         """Payloads stored with special-char IDs can be retrieved correctly."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload("special-char-roundtrip")
         ctx = make_store_context(
             make_workflow_context(namespace="ns/1", workflow_id="wf/2#3")
@@ -397,10 +345,10 @@ class TestS3StorageDriverStoreRetrieve:
     async def test_store_returns_claim_with_bucket_key_and_hash(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload()
         [claim] = await driver.store(make_store_context(), [payload])
-        assert claim.claim_data["bucket"] == _BUCKET
+        assert claim.claim_data["bucket"] == BUCKET
         assert "key" in claim.claim_data
         assert claim.claim_data["hash_algorithm"] == "sha256"
         expected_hash = hashlib.sha256(payload.SerializeToString()).hexdigest()
@@ -409,7 +357,7 @@ class TestS3StorageDriverStoreRetrieve:
     async def test_roundtrip_single_payload(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload("round-trip value")
         [claim] = await driver.store(make_store_context(), [payload])
         [retrieved] = await driver.retrieve(StorageDriverRetrieveContext(), [claim])
@@ -418,7 +366,7 @@ class TestS3StorageDriverStoreRetrieve:
     async def test_roundtrip_multiple_payloads(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payloads = [make_payload(f"value-{i}") for i in range(3)]
         claims = await driver.store(make_store_context(), payloads)
         retrieved = await driver.retrieve(StorageDriverRetrieveContext(), claims)
@@ -427,7 +375,7 @@ class TestS3StorageDriverStoreRetrieve:
     async def test_empty_payloads_returns_empty_list(
         self, driver_client: S3StorageDriverClient
     ) -> None:
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         assert await driver.store(make_store_context(), []) == []
         assert await driver.retrieve(StorageDriverRetrieveContext(), []) == []
 
@@ -437,14 +385,14 @@ class TestS3StorageDriverStoreRetrieve:
         """Payloads above the 8 MiB multipart threshold are uploaded via multipart
         and retrieved correctly. The S3 ETag for multipart objects contains a '-'
         suffix (e.g. 'hash-2'), which we assert to confirm multipart was used."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         # Slightly above the default 8 MiB multipart_threshold
         large_payload = make_payload("x" * (9 * 1024 * 1024))
         [claim] = await driver.store(make_store_context(), [large_payload])
         [retrieved] = await driver.retrieve(StorageDriverRetrieveContext(), [claim])
         assert retrieved == large_payload
         head = await aioboto3_client.head_object(
-            Bucket=_BUCKET, Key=claim.claim_data["key"]
+            Bucket=BUCKET, Key=claim.claim_data["key"]
         )
         assert "-" in head["ETag"], "Expected a multipart ETag (hash-N format)"
 
@@ -452,18 +400,18 @@ class TestS3StorageDriverStoreRetrieve:
         self, aioboto3_client: S3Client, driver_client: S3StorageDriverClient
     ) -> None:
         """Two identical payloads produce the same S3 key; only one object is stored."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload("same-value")
         claims = await driver.store(make_store_context(), [payload, payload])
         assert claims[0].claim_data["key"] == claims[1].claim_data["key"]
-        response = await aioboto3_client.list_objects_v2(Bucket=_BUCKET)
+        response = await aioboto3_client.list_objects_v2(Bucket=BUCKET)
         assert response["KeyCount"] == 1
 
     async def test_skips_upload_when_key_exists(
         self, counting_driver_client: CountingDriverClient
     ) -> None:
         """When a key already exists in S3, put_object is not called again."""
-        driver = S3StorageDriver(client=counting_driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=counting_driver_client, bucket=BUCKET)
         payload = make_payload("upload-once")
 
         await driver.store(make_store_context(), [payload])
@@ -478,7 +426,7 @@ class TestS3StorageDriverStoreRetrieve:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         """Storing the same payload twice returns correct data on retrieve."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload("preserve-me")
 
         [claim1] = await driver.store(make_store_context(), [payload])
@@ -492,7 +440,7 @@ class TestS3StorageDriverStoreRetrieve:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         """Retrieve raises RuntimeError when the hash in the claim doesn't match."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload("check-integrity")
         [claim] = await driver.store(make_store_context(), [payload])
 
@@ -509,7 +457,7 @@ class TestS3StorageDriverStoreRetrieve:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         """Retrieve raises ValueError when the claim specifies a non-sha256 algorithm."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload("unsupported-algo")
         [claim] = await driver.store(make_store_context(), [payload])
 
@@ -526,7 +474,7 @@ class TestS3StorageDriverStoreRetrieve:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         """Claims without hash fields still retrieve successfully (backward compat)."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payload = make_payload("no-hash-claim")
         [claim] = await driver.store(make_store_context(), [payload])
 
@@ -568,7 +516,7 @@ class TestS3StorageDriverBucketCallable:
         def counting_selector(_ctx: StorageDriverStoreContext, _p: Payload) -> str:
             nonlocal call_count
             call_count += 1
-            return _BUCKET
+            return BUCKET
 
         driver = S3StorageDriver(client=driver_client, bucket=counting_selector)
         await driver.store(
@@ -593,7 +541,7 @@ class TestS3StorageDriverBucketCallable:
                 queue = ctx.serialization_context.activity_task_queue
                 if queue and queue in queue_buckets:
                     return queue_buckets[queue]
-            return _BUCKET
+            return BUCKET
 
         driver = S3StorageDriver(client=driver_client, bucket=queue_selector)
 
@@ -626,7 +574,7 @@ class TestS3StorageDriverBucketCallable:
 
         def capturing_selector(ctx: StorageDriverStoreContext, p: Payload) -> str:
             received.append((ctx, p))
-            return _BUCKET
+            return BUCKET
 
         payload = make_payload()
         store_ctx = make_store_context(make_workflow_context())
@@ -668,13 +616,13 @@ class TestS3StorageDriverErrors:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         key = "/d/sha256/nonexistent"
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
-        claim = StorageDriverClaim(claim_data={"bucket": _BUCKET, "key": key})
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
+        claim = StorageDriverClaim(claim_data={"bucket": BUCKET, "key": key})
         with pytest.raises(RuntimeError) as exc_info:
             await driver.retrieve(StorageDriverRetrieveContext(), [claim])
         assert (
             str(exc_info.value)
-            == f"S3StorageDriver retrieve failed [bucket={_BUCKET}, key={key}]"
+            == f"S3StorageDriver retrieve failed [bucket={BUCKET}, key={key}]"
         )
         assert isinstance(exc_info.value.__cause__, ClientError)
         assert (
@@ -687,7 +635,7 @@ class TestS3StorageDriverErrors:
     ) -> None:
         bucket = "does-not-exist"
         key = "/d/sha256/anything"
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         claim = StorageDriverClaim(claim_data={"bucket": bucket, "key": key})
         with pytest.raises(RuntimeError) as exc_info:
             await driver.retrieve(StorageDriverRetrieveContext(), [claim])
@@ -715,7 +663,7 @@ class TestS3StorageDriverErrors:
         ):
             S3StorageDriver(
                 client=MagicMock(spec=S3StorageDriverClient),
-                bucket=_BUCKET,
+                bucket=BUCKET,
                 max_payload_size=0,
             )
 
@@ -725,7 +673,7 @@ class TestS3StorageDriverErrors:
         ):
             S3StorageDriver(
                 client=MagicMock(spec=S3StorageDriverClient),
-                bucket=_BUCKET,
+                bucket=BUCKET,
                 max_payload_size=-1,
             )
 
@@ -733,7 +681,7 @@ class TestS3StorageDriverErrors:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         driver = S3StorageDriver(
-            client=driver_client, bucket=_BUCKET, max_payload_size=10
+            client=driver_client, bucket=BUCKET, max_payload_size=10
         )
         with pytest.raises(ValueError, match="max_payload_size"):
             await driver.store(make_store_context(), [make_payload("exceeds-limit")])
@@ -744,7 +692,7 @@ class TestS3StorageDriverErrors:
         payload = make_payload("x")
         driver = S3StorageDriver(
             client=driver_client,
-            bucket=_BUCKET,
+            bucket=BUCKET,
             max_payload_size=len(payload.SerializeToString()),
         )
         await driver.store(make_store_context(), [payload])
@@ -803,7 +751,7 @@ class TestS3StorageDriverConcurrency:
         barrier = _AsyncBarrier(num_payloads)
         driver_client.put_object = _barrier_wrapper(driver_client.put_object, barrier)  # type: ignore[method-assign]
 
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payloads = [make_payload(f"concurrent-store-{i}") for i in range(num_payloads)]
 
         claims = await driver.store(make_store_context(), payloads)
@@ -814,7 +762,7 @@ class TestS3StorageDriverConcurrency:
     ) -> None:
         """All downloads must be in-flight concurrently."""
         num_payloads = 5
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payloads = [
             make_payload(f"concurrent-retrieve-{i}") for i in range(num_payloads)
         ]
@@ -834,7 +782,7 @@ class TestS3StorageDriverConcurrency:
             delegate=driver_client,
             fail_on="object_exists",
         )
-        driver = S3StorageDriver(client=faulty_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=faulty_client, bucket=BUCKET)
         payloads = [make_payload(f"cancel-store-{i}") for i in range(3)]
 
         with pytest.raises(RuntimeError, match="store failed") as exc_info:
@@ -850,7 +798,7 @@ class TestS3StorageDriverConcurrency:
         self, driver_client: S3StorageDriverClient
     ) -> None:
         """When one download fails, all other in-flight downloads are cancelled."""
-        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
         payloads = [make_payload(f"cancel-retrieve-{i}") for i in range(3)]
         claims = await driver.store(make_store_context(), payloads)
 
@@ -858,7 +806,7 @@ class TestS3StorageDriverConcurrency:
             delegate=driver_client,
             fail_on="get_object",
         )
-        driver = S3StorageDriver(client=faulty_client, bucket=_BUCKET)
+        driver = S3StorageDriver(client=faulty_client, bucket=BUCKET)
 
         with pytest.raises(RuntimeError, match="retrieve failed") as exc_info:
             await driver.retrieve(StorageDriverRetrieveContext(), claims)
