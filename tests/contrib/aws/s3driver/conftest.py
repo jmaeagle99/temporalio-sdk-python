@@ -10,7 +10,8 @@ import aioboto3
 import pytest
 from types_aiobotocore_s3.client import S3Client
 
-from temporalio.contrib.aws.s3driver import S3StorageDriverClient, new_aioboto3_client
+from temporalio.contrib.aws.s3driver import S3StorageDriverClient
+from temporalio.contrib.aws.s3driver.aioboto3 import new_aioboto3_client
 
 BUCKET = "test-bucket"
 REGION = "us-east-1"

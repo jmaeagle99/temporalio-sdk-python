@@ -4,19 +4,22 @@
 
 This package provides AWS integrations for the Temporal Python SDK, including an Amazon S3 driver for [external storage](../../../README.md#external-storage).
 
-## Install Dependencies
-
-    python -m pip install "temporalio[aws-s3]"
-
 ## S3 Driver
 
-`temporalio.contrib.aws.s3driver.S3StorageDriver` stores and retrieves Temporal payloads in Amazon S3. It requires an [`aioboto3`](https://github.com/terrycain/aioboto3) S3 client and a `bucket` — either a static name or a callable for dynamic per-payload selection.
+`S3StorageDriver` stores and retrieves Temporal payloads in Amazon S3. It accepts any `S3StorageDriverClient` implementation and a `bucket` — either a static name or a callable for dynamic per-payload selection.
+
+### Using the built-in aioboto3 client
+
+The SDK ships with an [`aioboto3`](https://github.com/terrycain/aioboto3)-based client. Install the extra to pull in its dependencies:
+
+    python -m pip install "temporalio[aioboto3]"
 
 ```python
 import aioboto3
 import dataclasses
 from temporalio.client import Client
-from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
+from temporalio.contrib.aws.s3driver import S3StorageDriver
+from temporalio.contrib.aws.s3driver.aioboto3 import new_aioboto3_client
 from temporalio.converter import DataConverter, ExternalStorage
 
 session = aioboto3.Session()
@@ -37,14 +40,30 @@ async with session.client("s3") as s3_client:
     )
 ```
 
+### Custom S3 client implementations
+
+To use a different S3 library, subclass `S3StorageDriverClient` and implement `put_object`, `get_object`, and `object_exists`. The ABC has no external dependencies, so no AWS packages are required to import it.
+
+```python
+from temporalio.contrib.aws.s3driver import S3StorageDriverClient
+
+class MyS3Client(S3StorageDriverClient):
+    async def put_object(self, *, bucket: str, key: str, data: bytes) -> None: ...
+    async def object_exists(self, *, bucket: str, key: str) -> bool: ...
+    async def get_object(self, *, bucket: str, key: str) -> bytes: ...
+
+driver = S3StorageDriver(client=MyS3Client(), bucket="my-temporal-payloads")
+```
+
+### Key structure
+
 Payloads are stored under content-addressable keys derived from a SHA-256 hash of the serialized payload bytes, segmented by namespace and workflow/activity identifiers when serialization context is available, e.g.:
 
     v0/ns/my-namespace/wfi/my-workflow-id/d/sha256/<hash>
 
-Some things to note about the S3 driver:
+### Notes
 
 * Any driver used to store payloads must also be configured on the component that retrieves them. If the client stores workflow inputs using this driver, the worker must include it in its `ExternalStorage.drivers` list to retrieve them.
-* Credentials, region, endpoint, and other AWS settings are configured on the `aioboto3` client directly.
 * The target S3 bucket must already exist; the driver will not create it.
 * Identical serialized bytes within the same namespace and workflow (or activity) share the same S3 object — the key is content-addressable within that scope. The same bytes used across different workflows or namespaces produce distinct S3 objects because the key includes the namespace and workflow/activity identifiers.
 * Only payloads at or above `ExternalStorage.payload_size_threshold` (default: 256 KiB) are offloaded; smaller payloads are stored inline. Set `payload_size_threshold=None` to offload every payload regardless of size.
@@ -56,7 +75,8 @@ Some things to note about the S3 driver:
 To select the S3 bucket per payload, pass a callable as `bucket`:
 
 ```python
-from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
+from temporalio.contrib.aws.s3driver import S3StorageDriver
+from temporalio.contrib.aws.s3driver.aioboto3 import new_aioboto3_client
 
 driver = S3StorageDriver(
     client=new_aioboto3_client(s3_client),
@@ -68,7 +88,7 @@ driver = S3StorageDriver(
 
 ### Required IAM permissions
 
-The AWS credentials used by the `aioboto3` client must have the following S3 permissions on the target bucket and its objects:
+The AWS credentials used by your S3 client must have the following S3 permissions on the target bucket and its objects:
 
 ```json
 {

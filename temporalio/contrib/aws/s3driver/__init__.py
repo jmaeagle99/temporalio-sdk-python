@@ -4,14 +4,10 @@
     This API is experimental.
 """
 
-from temporalio.contrib.aws.s3driver._client import (
-    S3StorageDriverClient,
-    new_aioboto3_client,
-)
+from temporalio.contrib.aws.s3driver._client import S3StorageDriverClient
 from temporalio.contrib.aws.s3driver._driver import S3StorageDriver
 
 __all__ = [
     "S3StorageDriverClient",
     "S3StorageDriver",
-    "new_aioboto3_client",
 ]

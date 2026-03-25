@@ -20,7 +20,8 @@ from types_aiobotocore_s3.client import S3Client
 
 import temporalio.converter
 from temporalio.client import Client, WorkflowFailureError
-from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
+from temporalio.contrib.aws.s3driver import S3StorageDriver
+from temporalio.contrib.aws.s3driver.aioboto3 import new_aioboto3_client
 from temporalio.converter import ExternalStorage, JSONPlainPayloadConverter
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment

@@ -58,7 +58,7 @@ class S3StorageDriver(StorageDriver):
 
         Args:
             client: An :class:`S3StorageDriverClient` implementation. Use
-                :func:`~temporalio.contrib.aws.s3driver.new_aioboto3_client` to
+                :func:`~temporalio.contrib.aws.s3driver.aioboto3.new_aioboto3_client` to
                 wrap an aioboto3 S3 client.
             bucket: S3 bucket name, access point ARN, or a callable that
                 accepts ``(StorageDriverStoreContext, Payload)`` and returns

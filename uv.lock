@@ -4791,7 +4791,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-aws-s3 = [
+aioboto3 = [
     { name = "aioboto3" },
     { name = "types-aioboto3", extra = ["s3"] },
 ]
@@ -4845,7 +4845,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aioboto3", marker = "extra == 'aws-s3'", specifier = ">=10.4.0" },
+    { name = "aioboto3", marker = "extra == 'aioboto3'", specifier = ">=10.4.0" },
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.27.0,<2" },
     { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.48.2,<2" },
     { name = "mcp", marker = "extra == 'openai-agents'", specifier = ">=1.9.4,<2" },
@@ -4856,11 +4856,11 @@ requires-dist = [
     { name = "protobuf", specifier = ">=3.20,<7.0.0" },
     { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2.0.0,<3" },
     { name = "python-dateutil", marker = "python_full_version < '3.11'", specifier = ">=2.8.2,<3" },
-    { name = "types-aioboto3", extras = ["s3"], marker = "extra == 'aws-s3'", specifier = ">=10.4.0" },
+    { name = "types-aioboto3", extras = ["s3"], marker = "extra == 'aioboto3'", specifier = ">=10.4.0" },
     { name = "types-protobuf", specifier = ">=3.20" },
     { name = "typing-extensions", specifier = ">=4.2.0,<5" },
 ]
-provides-extras = ["grpc", "opentelemetry", "pydantic", "openai-agents", "google-adk", "aws-s3"]
+provides-extras = ["grpc", "opentelemetry", "pydantic", "openai-agents", "google-adk", "aioboto3"]
 
 [package.metadata.requires-dev]
 dev = [

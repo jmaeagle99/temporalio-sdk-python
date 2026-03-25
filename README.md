@@ -468,13 +468,14 @@ External storage allows large payloads to be offloaded to an external storage se
 
 External storage is configured via the `external_storage` parameter on `DataConverter`.  It should be configured on the `Client` both for clients of your workflow as well as on the worker -- anywhere large payloads may be uploaded or downloaded.
 
-A `StorageDriver` handles uploading and downloading payloads. Temporal provides [built-in drivers](#built-in-drivers) for common storage solutions, or you may implement a [custom driver](#custom-drivers). Here's an example using the built-in `S3StorageDriver`.
+A `StorageDriver` handles uploading and downloading payloads. Temporal provides [built-in drivers](#built-in-drivers) for common storage solutions, or you may implement a [custom driver](#custom-drivers). Here's an example using the built-in `S3StorageDriver` with the SDK's `aioboto3` client:
 
 ```python
 import aioboto3
 import dataclasses
 from temporalio.client import Client, ClientConfig
-from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
+from temporalio.contrib.aws.s3driver import S3StorageDriver
+from temporalio.contrib.aws.s3driver.aioboto3 import new_aioboto3_client
 from temporalio.converter import DataConverter
 from temporalio.converter import ExternalStorage
 
@@ -494,6 +495,8 @@ async with session.client("s3") as s3_client:
         ),
     )
 ```
+
+See the [S3 driver README](temporalio/contrib/aws/s3driver/) for further details.
 
 Some things to note about external storage:
 
@@ -551,7 +554,7 @@ Some things to note about driver selection:
 
 ###### Built-in Drivers
 
-- **[S3 Storage Driver](temporalio/contrib/aws/s3driver/)**: ⚠️ **Experimental** ⚠️ Amazon S3 driver. Install dependencies with `pip install "temporalio[aws-s3]"`.
+- **[S3 Storage Driver](temporalio/contrib/aws/s3driver/)**: ⚠️ **Experimental** ⚠️ Amazon S3 driver. Ships with an aioboto3 client, or bring your own by subclassing `S3StorageDriverClient`.
 
 ###### Custom Drivers
 
