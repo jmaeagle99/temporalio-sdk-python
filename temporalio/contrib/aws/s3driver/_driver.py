@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import urllib.parse
 from collections.abc import Callable, Sequence
 
 from temporalio.api.common.v1 import Payload
@@ -31,7 +32,7 @@ class S3StorageDriver(StorageDriver):
         self,
         client: S3StorageDriverClient,
         bucket: str | Callable[[StorageDriverStoreContext, Payload], str],
-        driver_name: str | None = None,
+        driver_name: str = "aws.s3driver",
         max_payload_size: int = 50 * 1024 * 1024,
     ):
         """Constructs the S3 driver.
@@ -45,9 +46,9 @@ class S3StorageDriver(StorageDriver):
                 a bucket name. A callable allows dynamic per-payload bucket
                 selection.
             driver_name: Name of this driver instance. Defaults to
-                ``"aws.s3driver"``. Override only when registering
-                multiple S3 drivers with distinct configurations under the same
-                :attr:`~temporalio.extstore.Options.drivers` list.
+                ``"aws.s3driver"``. Override when registering
+                multiple S3StorageDriver instances with distinct configurations
+                under the same :attr:`~temporalio.extstore.Options.drivers` list.
             max_payload_size: Maximum serialized payload size in bytes that the
                 driver will accept. Defaults to 52428800 (50 MiB). Raise this
                 value if your workload requires larger payloads; lower it to
@@ -106,8 +107,17 @@ class S3StorageDriver(StorageDriver):
         # identifiers are case sensitive in Temporal, otherwise lower case the case insensitive
         # identifiers.
 
-        # Temporal cloud has case-insensitive namespaces
-        namespace_segments = f"/ns/{namespace.lower()}" if namespace else ""
+        # URL encode values to avoid characters that break the key format
+        # e.g. spaces, foward-slashes, etc.
+        if namespace:
+            # Temporal cloud has case-insensitive namespaces
+            namespace = urllib.parse.quote(namespace.lower(), safe="")
+        if workflow_id:
+            workflow_id = urllib.parse.quote(workflow_id, safe="")
+        if activity_id:
+            activity_id = urllib.parse.quote(activity_id, safe="")
+
+        namespace_segments = f"/ns/{namespace}" if namespace else ""
 
         context_segments = ""
         # Prioritize workflow over activity so that the same payload that

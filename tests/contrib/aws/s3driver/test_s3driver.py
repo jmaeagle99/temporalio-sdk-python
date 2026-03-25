@@ -266,6 +266,81 @@ class TestS3StorageDriverKeyConstruction:
         assert "MyWorkflow" in key
         assert "myworkflow" not in key
 
+    async def test_key_urlencodes_workflow_id_with_slashes(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        payload = make_payload()
+        ctx = make_store_context(
+            make_workflow_context(namespace="ns1", workflow_id="order/123/v2")
+        )
+        [claim] = await driver.store(ctx, [payload])
+        expected_hash = hashlib.sha256(payload.SerializeToString()).hexdigest()
+        assert (
+            claim.claim_data["key"]
+            == f"v0/ns/ns1/wfi/order%2F123%2Fv2/d/sha256/{expected_hash}"
+        )
+
+    async def test_key_urlencodes_workflow_id_with_special_chars(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        payload = make_payload()
+        ctx = make_store_context(
+            make_workflow_context(namespace="ns1", workflow_id="wf#1 &foo=bar")
+        )
+        [claim] = await driver.store(ctx, [payload])
+        expected_hash = hashlib.sha256(payload.SerializeToString()).hexdigest()
+        assert (
+            claim.claim_data["key"]
+            == f"v0/ns/ns1/wfi/wf%231%20%26foo%3Dbar/d/sha256/{expected_hash}"
+        )
+
+    async def test_key_urlencodes_activity_id(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        payload = make_payload()
+        ctx = make_store_context(
+            make_activity_context(
+                namespace="ns1", activity_id="act/1#2", workflow_id=None
+            )
+        )
+        [claim] = await driver.store(ctx, [payload])
+        expected_hash = hashlib.sha256(payload.SerializeToString()).hexdigest()
+        assert (
+            claim.claim_data["key"]
+            == f"v0/ns/ns1/aci/act%2F1%232/d/sha256/{expected_hash}"
+        )
+
+    async def test_key_urlencodes_namespace(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        payload = make_payload()
+        ctx = make_store_context(
+            make_workflow_context(namespace="my/ns#1", workflow_id="wf1")
+        )
+        [claim] = await driver.store(ctx, [payload])
+        expected_hash = hashlib.sha256(payload.SerializeToString()).hexdigest()
+        assert (
+            claim.claim_data["key"]
+            == f"v0/ns/my%2Fns%231/wfi/wf1/d/sha256/{expected_hash}"
+        )
+
+    async def test_key_urlencoded_roundtrip(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        """Payloads stored with special-char IDs can be retrieved correctly."""
+        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        payload = make_payload("special-char-roundtrip")
+        ctx = make_store_context(
+            make_workflow_context(namespace="ns/1", workflow_id="wf/2#3")
+        )
+        [claim] = await driver.store(ctx, [payload])
+        [retrieved] = await driver.retrieve(StorageDriverRetrieveContext(), [claim])
+        assert retrieved == payload
+
 
 # ---------------------------------------------------------------------------
 # TestS3StorageDriverStoreRetrieve
