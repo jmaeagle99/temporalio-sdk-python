@@ -456,8 +456,25 @@ class TestS3StorageDriverStoreRetrieve:
                 "hash_value": "0" * 64,
             },
         )
-        with pytest.raises(RuntimeError, match="integrity check failed"):
+        with pytest.raises(ValueError, match="integrity check failed"):
             await driver.retrieve(StorageDriverRetrieveContext(), [tampered_claim])
+
+    async def test_retrieve_rejects_unsupported_hash_algorithm(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        """Retrieve raises ValueError when the claim specifies a non-sha256 algorithm."""
+        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        payload = make_payload("unsupported-algo")
+        [claim] = await driver.store(make_store_context(), [payload])
+
+        bad_claim = StorageDriverClaim(
+            claim_data={
+                **claim.claim_data,
+                "hash_algorithm": "md5",
+            },
+        )
+        with pytest.raises(ValueError, match="unsupported hash algorithm"):
+            await driver.retrieve(StorageDriverRetrieveContext(), [bad_claim])
 
     async def test_retrieve_without_hash_in_claim(
         self, driver_client: S3StorageDriverClient

@@ -186,11 +186,17 @@ class S3StorageDriver(StorageDriver):
             expected_hash = claim.claim_data.get("hash_value")
             hash_algorithm = claim.claim_data.get("hash_algorithm")
             if expected_hash and hash_algorithm:
+                if hash_algorithm != "sha256":
+                    raise ValueError(
+                        f"S3StorageDriver unsupported hash algorithm "
+                        f"[bucket={bucket}, key={key}]: "
+                        f"expected sha256, got {hash_algorithm}"
+                    )
                 actual_hash = (
-                    hashlib.new(hash_algorithm, payload_bytes).hexdigest().lower()
+                    hashlib.sha256(payload_bytes).hexdigest().lower()
                 )
                 if actual_hash != expected_hash:
-                    raise RuntimeError(
+                    raise ValueError(
                         f"S3StorageDriver integrity check failed "
                         f"[bucket={bucket}, key={key}]: "
                         f"expected {hash_algorithm}:{expected_hash}, "
