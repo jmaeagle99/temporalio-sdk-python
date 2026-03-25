@@ -245,7 +245,7 @@ class TestS3StorageDriverKeyConstruction:
         expected_hash = hashlib.sha256(payload.SerializeToString()).hexdigest()
         assert claim.claim_data["key"] == f"v0/ns/ns1/aci/act1/d/sha256/{expected_hash}"
 
-    async def test_key_case_sensitivity(
+    async def test_key_preserves_case(
         self, driver_client: S3StorageDriverClient
     ) -> None:
         driver = S3StorageDriver(client=driver_client, bucket=BUCKET)
@@ -255,10 +255,8 @@ class TestS3StorageDriverKeyConstruction:
         )
         [claim] = await driver.store(ctx, [payload])
         key = claim.claim_data["key"]
-        assert "mynamespace" in key
-        assert "MyNamespace" not in key
+        assert "MyNamespace" in key
         assert "MyWorkflow" in key
-        assert "myworkflow" not in key
 
     async def test_key_urlencodes_workflow_id_with_slashes(
         self, driver_client: S3StorageDriverClient

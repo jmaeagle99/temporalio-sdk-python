@@ -122,15 +122,10 @@ class S3StorageDriver(StorageDriver):
                 activity_id = context.serialization_context.activity_id
             namespace = context.serialization_context.namespace
 
-        # S3 object keys are case sensitive; preserve segment case sensitivity where the
-        # identifiers are case sensitive in Temporal, otherwise lower case the case insensitive
-        # identifiers.
-
         # URL encode values to avoid characters that break the key format
-        # e.g. spaces, foward-slashes, etc.
+        # e.g. spaces, forward-slashes, etc.
         if namespace:
-            # Temporal cloud has case-insensitive namespaces
-            namespace = urllib.parse.quote(namespace.lower(), safe="")
+            namespace = urllib.parse.quote(namespace, safe="")
         if workflow_id:
             workflow_id = urllib.parse.quote(workflow_id, safe="")
         if activity_id:

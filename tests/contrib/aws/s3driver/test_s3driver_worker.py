@@ -265,7 +265,7 @@ async def test_s3_driver_identified_casing(
         )
     keys = await _list_keys(aioboto3_client)
     assert len(keys) == 1
-    assert "/ns/default/" in keys[0], "Namespace segment should be lowercased"
+    assert "/ns/default/" in keys[0], "Namespace segment should be present"
     assert (
         f"/wfi/{workflow_id}/" in keys[0]
     ), "Workflow ID should preserve original case in the key"
