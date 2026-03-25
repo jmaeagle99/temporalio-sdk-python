@@ -211,9 +211,7 @@ class S3StorageDriver(StorageDriver):
                         f"[bucket={bucket}, key={key}]: "
                         f"expected sha256, got {hash_algorithm}"
                     )
-                actual_hash = (
-                    hashlib.sha256(payload_bytes).hexdigest().lower()
-                )
+                actual_hash = hashlib.sha256(payload_bytes).hexdigest().lower()
                 if actual_hash != expected_hash:
                     raise ValueError(
                         f"S3StorageDriver integrity check failed "
