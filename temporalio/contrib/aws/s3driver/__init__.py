@@ -1,4 +1,8 @@
-"""Amazon S3 storage driver for Temporal external payload storage."""
+"""Amazon S3 storage driver for Temporal external payload storage.
+
+.. warning::
+    This API is experimental.
+"""
 
 from temporalio.contrib.aws.s3driver._client import (
     S3StorageDriverClient,
