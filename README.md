@@ -474,17 +474,16 @@ A `StorageDriver` handles uploading and downloading payloads. Temporal provides 
 import aioboto3
 import dataclasses
 from temporalio.client import Client, ClientConfig
-from temporalio.contrib.aws.s3driver import S3StorageDriver
+from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
 from temporalio.converter import DataConverter
 from temporalio.converter import ExternalStorage
-from types_aiobotocore_s3.client import S3Client
 
 client_config = ClientConfig.load_client_connect_config()
 
 session = aioboto3.Session()
 async with session.client("s3") as s3_client:
     driver = S3StorageDriver(
-        client=s3_client,
+        client=new_aioboto3_client(s3_client),
         bucket="my-bucket",
     )
     client = await Client.connect(

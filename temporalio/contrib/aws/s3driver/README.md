@@ -16,14 +16,17 @@ This package provides AWS integrations for the Temporal Python SDK, including an
 import aioboto3
 import dataclasses
 from temporalio.client import Client
-from temporalio.contrib.aws.s3driver import S3StorageDriver
+from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
 from temporalio.converter import DataConverter, ExternalStorage
 
 session = aioboto3.Session()
 # Credentials and region are resolved automatically from the standard AWS credential
 # chain e.g. environment variables, ~/.aws/config, IAM instance profile, and so on.
 async with session.client("s3") as s3_client:
-    driver = S3StorageDriver(client=s3_client, bucket="my-temporal-payloads")
+    driver = S3StorageDriver(
+        client=new_aioboto3_client(s3_client),
+        bucket="my-temporal-payloads",
+    )
 
     client = await Client.connect(
         "localhost:7233",
@@ -53,10 +56,10 @@ Some things to note about the S3 driver:
 To select the S3 bucket per payload, pass a callable as `bucket`:
 
 ```python
-from temporalio.contrib.aws.s3driver import S3StorageDriver
+from temporalio.contrib.aws.s3driver import S3StorageDriver, new_aioboto3_client
 
 driver = S3StorageDriver(
-    client=s3_client,
+    client=new_aioboto3_client(s3_client),
     bucket=lambda context, payload: (
         "large-payloads" if payload.ByteSize() > 10 * 1024 * 1024 else "small-payloads"
     ),
