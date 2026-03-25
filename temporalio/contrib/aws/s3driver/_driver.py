@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import urllib.parse
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Coroutine, Sequence
+from typing import Any, TypeVar
 
 from temporalio.api.common.v1 import Payload
 from temporalio.contrib.aws.s3driver._client import S3StorageDriverClient
@@ -15,6 +16,24 @@ from temporalio.converter import (
     StorageDriverStoreContext,
     WorkflowSerializationContext,
 )
+
+_T = TypeVar("_T")
+
+
+async def _gather_with_cancellation(
+    coros: Sequence[Coroutine[Any, Any, _T]],
+) -> list[_T]:
+    """Run coroutines concurrently, cancelling all remaining tasks if one fails."""
+    if not coros:
+        return []
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 class S3StorageDriver(StorageDriver):
@@ -163,7 +182,7 @@ class S3StorageDriver(StorageDriver):
                 },
             )
 
-        return list(await asyncio.gather(*[_upload(p) for p in payloads]))
+        return await _gather_with_cancellation([_upload(p) for p in payloads])
 
     async def retrieve(
         self,
@@ -207,4 +226,4 @@ class S3StorageDriver(StorageDriver):
             payload.ParseFromString(payload_bytes)
             return payload
 
-        return list(await asyncio.gather(*[_download(c) for c in claims]))
+        return await _gather_with_cancellation([_download(c) for c in claims])

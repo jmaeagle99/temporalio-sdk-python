@@ -164,6 +164,52 @@ class CountingDriverClient(S3StorageDriverClient):
         return await self._delegate.get_object(bucket=bucket, key=key)
 
 
+class FailOnceDriverClient(S3StorageDriverClient):
+    """S3StorageDriverClient wrapper that fails the first call to a specified
+    method and blocks subsequent calls until cancelled.
+
+    Used to verify that the driver cancels in-flight tasks when one fails.
+    """
+
+    def __init__(
+        self,
+        delegate: S3StorageDriverClient,
+        fail_on: str,
+    ) -> None:
+        self._delegate = delegate
+        self._fail_on = fail_on
+        self._call_count = 0
+        self.cancelled: list[bool] = []
+
+    async def _maybe_fail(self) -> None:
+        self._call_count += 1
+        if self._call_count == 1:
+            raise ConnectionError("S3 connection lost")
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            self.cancelled.append(True)
+            raise
+
+    async def put_object(self, *, bucket: str, key: str, data: bytes) -> None:
+        """Delegate or fail depending on configuration."""
+        if self._fail_on == "put_object":
+            await self._maybe_fail()
+        await self._delegate.put_object(bucket=bucket, key=key, data=data)
+
+    async def object_exists(self, *, bucket: str, key: str) -> bool:
+        """Delegate or fail depending on configuration."""
+        if self._fail_on == "object_exists":
+            await self._maybe_fail()
+        return await self._delegate.object_exists(bucket=bucket, key=key)
+
+    async def get_object(self, *, bucket: str, key: str) -> bytes:
+        """Delegate or fail depending on configuration."""
+        if self._fail_on == "get_object":
+            await self._maybe_fail()
+        return await self._delegate.get_object(bucket=bucket, key=key)
+
+
 @pytest.fixture
 def counting_driver_client(
     driver_client: S3StorageDriverClient,
@@ -779,3 +825,46 @@ class TestS3StorageDriverConcurrency:
 
         retrieved = await driver.retrieve(StorageDriverRetrieveContext(), claims)
         assert retrieved == payloads
+
+    async def test_store_cancels_remaining_on_failure(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        """When one upload fails, all other in-flight uploads are cancelled."""
+        faulty_client = FailOnceDriverClient(
+            delegate=driver_client,
+            fail_on="object_exists",
+        )
+        driver = S3StorageDriver(client=faulty_client, bucket=_BUCKET)
+        payloads = [make_payload(f"cancel-store-{i}") for i in range(3)]
+
+        with pytest.raises(RuntimeError, match="store failed") as exc_info:
+            await driver.store(make_store_context(), payloads)
+
+        assert isinstance(exc_info.value.__cause__, ConnectionError)
+        assert str(exc_info.value.__cause__) == "S3 connection lost"
+        assert (
+            len(faulty_client.cancelled) == 2
+        ), "Expected 2 remaining tasks to be cancelled"
+
+    async def test_retrieve_cancels_remaining_on_failure(
+        self, driver_client: S3StorageDriverClient
+    ) -> None:
+        """When one download fails, all other in-flight downloads are cancelled."""
+        driver = S3StorageDriver(client=driver_client, bucket=_BUCKET)
+        payloads = [make_payload(f"cancel-retrieve-{i}") for i in range(3)]
+        claims = await driver.store(make_store_context(), payloads)
+
+        faulty_client = FailOnceDriverClient(
+            delegate=driver_client,
+            fail_on="get_object",
+        )
+        driver = S3StorageDriver(client=faulty_client, bucket=_BUCKET)
+
+        with pytest.raises(RuntimeError, match="retrieve failed") as exc_info:
+            await driver.retrieve(StorageDriverRetrieveContext(), claims)
+
+        assert isinstance(exc_info.value.__cause__, ConnectionError)
+        assert str(exc_info.value.__cause__) == "S3 connection lost"
+        assert (
+            len(faulty_client.cancelled) == 2
+        ), "Expected 2 remaining tasks to be cancelled"
