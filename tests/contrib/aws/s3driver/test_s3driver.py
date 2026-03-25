@@ -450,7 +450,10 @@ class TestS3StorageDriverStoreRetrieve:
                 "hash_value": "0" * 64,
             },
         )
-        with pytest.raises(ValueError, match="integrity check failed"):
+        with pytest.raises(
+            ValueError,
+            match=r"S3StorageDriver integrity check failed \[bucket=.+, key=.+\]: expected sha256:.+, got sha256:.+",
+        ):
             await driver.retrieve(StorageDriverRetrieveContext(), [tampered_claim])
 
     async def test_retrieve_rejects_unsupported_hash_algorithm(
@@ -467,7 +470,10 @@ class TestS3StorageDriverStoreRetrieve:
                 "hash_algorithm": "md5",
             },
         )
-        with pytest.raises(ValueError, match="unsupported hash algorithm"):
+        with pytest.raises(
+            ValueError,
+            match=r"S3StorageDriver unsupported hash algorithm \[bucket=.+, key=.+\]: expected sha256, got md5",
+        ):
             await driver.retrieve(StorageDriverRetrieveContext(), [bad_claim])
 
     async def test_retrieve_without_hash_in_claim(
@@ -683,7 +689,10 @@ class TestS3StorageDriverErrors:
         driver = S3StorageDriver(
             client=driver_client, bucket=BUCKET, max_payload_size=10
         )
-        with pytest.raises(ValueError, match="max_payload_size"):
+        with pytest.raises(
+            ValueError,
+            match=r"Payload size \d+ bytes exceeds the configured max_payload_size of 10 bytes",
+        ):
             await driver.store(make_store_context(), [make_payload("exceeds-limit")])
 
     async def test_payload_at_max_size_succeeds(
@@ -785,7 +794,10 @@ class TestS3StorageDriverConcurrency:
         driver = S3StorageDriver(client=faulty_client, bucket=BUCKET)
         payloads = [make_payload(f"cancel-store-{i}") for i in range(3)]
 
-        with pytest.raises(RuntimeError, match="store failed") as exc_info:
+        with pytest.raises(
+            RuntimeError,
+            match=r"S3StorageDriver store failed \[bucket=.+, key=.+\]",
+        ) as exc_info:
             await driver.store(make_store_context(), payloads)
 
         assert isinstance(exc_info.value.__cause__, ConnectionError)
@@ -808,7 +820,10 @@ class TestS3StorageDriverConcurrency:
         )
         driver = S3StorageDriver(client=faulty_client, bucket=BUCKET)
 
-        with pytest.raises(RuntimeError, match="retrieve failed") as exc_info:
+        with pytest.raises(
+            RuntimeError,
+            match=r"S3StorageDriver retrieve failed \[bucket=.+, key=.+\]",
+        ) as exc_info:
             await driver.retrieve(StorageDriverRetrieveContext(), claims)
 
         assert isinstance(exc_info.value.__cause__, ConnectionError)
