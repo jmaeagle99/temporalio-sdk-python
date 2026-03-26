@@ -19,10 +19,6 @@ from typing_extensions import Self
 
 from temporalio.api.common.v1 import Payload, Payloads
 from temporalio.converter._payload_converter import JSONPlainPayloadConverter
-from temporalio.converter._serialization_context import (
-    SerializationContext,
-    WithSerializationContext,
-)
 
 _T = TypeVar("_T")
 
@@ -93,6 +89,91 @@ class StorageDriverClaim:
 
 
 @dataclass(frozen=True)
+class StorageDriverWorkflowInfo:
+    """Workflow identity information for external storage operations.
+
+    .. warning::
+        This API is experimental.
+    """
+
+    id: str | None = None
+    """The workflow ID."""
+
+    run_id: str | None = None
+    """The workflow run ID, if available."""
+
+    type: str | None = None
+    """The workflow type name, if available."""
+
+
+@dataclass(frozen=True)
+class StorageDriverActivityInfo:
+    """Activity identity information for external storage operations.
+
+    .. warning::
+        This API is experimental.
+    """
+
+    id: str | None = None
+    """The activity ID."""
+
+    run_id: str | None = None
+    """The activity run ID (only for standalone activities)."""
+
+    type: str | None = None
+    """The activity type name, if available."""
+
+
+@dataclass(frozen=True)
+class StorageDriverStoreMetadata:
+    """Store-only metadata available during external storage operations.
+
+    .. warning::
+        This API is experimental.
+    """
+
+    namespace: str | None = None
+    """The namespace of the current execution context."""
+
+    current_workflow: StorageDriverWorkflowInfo | None = None
+    """The workflow execution context from which this payload is being stored, if any."""
+
+    current_activity: StorageDriverActivityInfo | None = None
+    """The activity execution context from which this payload is being stored, if any.
+    Set only when running inside an activity worker."""
+
+    target_workflow: StorageDriverWorkflowInfo | None = None
+    """The workflow for which this payload is being stored (e.g. child workflow being
+    started, external workflow being signaled)."""
+
+    target_activity: StorageDriverActivityInfo | None = None
+    """The activity for which this payload is being stored."""
+
+
+_current_store_metadata: contextvars.ContextVar[StorageDriverStoreMetadata | None] = (
+    contextvars.ContextVar("_current_store_metadata", default=None)
+)
+
+
+@contextlib.contextmanager
+def store_metadata_context(
+    metadata: StorageDriverStoreMetadata | None,
+) -> Generator[None, None, None]:
+    """Context manager that sets store metadata and resets it on exit.
+
+    If metadata is None, yields without setting anything.
+    """
+    if metadata is None:
+        yield
+        return
+    token = _current_store_metadata.set(metadata)
+    try:
+        yield
+    finally:
+        _current_store_metadata.reset(token)
+
+
+@dataclass(frozen=True)
 class StorageDriverStoreContext:
     """Context passed to :meth:`StorageDriver.store` and ``driver_selector`` calls.
 
@@ -100,10 +181,22 @@ class StorageDriverStoreContext:
         This API is experimental.
     """
 
-    serialization_context: SerializationContext | None = None
-    """The serialization context active when this store operation was initiated,
-    or ``None`` if no context has been set.
-    """
+    namespace: str | None = None
+    """The namespace of the current execution context."""
+
+    current_workflow: StorageDriverWorkflowInfo | None = None
+    """The workflow execution context from which this payload is being stored, if any."""
+
+    current_activity: StorageDriverActivityInfo | None = None
+    """The activity execution context from which this payload is being stored, if any.
+    Set only when running inside an activity worker."""
+
+    target_workflow: StorageDriverWorkflowInfo | None = None
+    """The workflow for which this payload is being stored (e.g. child workflow being
+    started, external workflow being signaled)."""
+
+    target_activity: StorageDriverActivityInfo | None = None
+    """The activity for which this payload is being stored."""
 
 
 @dataclass(frozen=True)
@@ -182,7 +275,7 @@ class _StorageReference:
 
 
 @dataclass(frozen=True)
-class ExternalStorage(WithSerializationContext):
+class ExternalStorage:
     """Configuration for external storage behavior.
 
     .. warning::
@@ -223,10 +316,6 @@ class ExternalStorage(WithSerializationContext):
     for retrieval lookups.
     """
 
-    _context: SerializationContext | None = dataclasses.field(
-        init=False, default=None, repr=False, compare=False
-    )
-
     _claim_converter: ClassVar[JSONPlainPayloadConverter] = JSONPlainPayloadConverter(
         encoding=_REFERENCE_ENCODING.decode()
     )
@@ -257,12 +346,6 @@ class ExternalStorage(WithSerializationContext):
             driver_map[name] = driver
         object.__setattr__(self, "_driver_map", driver_map)
 
-    def with_context(self, context: SerializationContext) -> Self:
-        """Return a copy of these options with the serialization context applied."""
-        result = dataclasses.replace(self)
-        object.__setattr__(result, "_context", context)
-        return result
-
     def _select_driver(
         self, context: StorageDriverStoreContext, payload: Payload
     ) -> StorageDriver | None:
@@ -292,9 +375,20 @@ class ExternalStorage(WithSerializationContext):
             raise ValueError(f"No driver found with name '{name}'")
         return driver
 
+    @staticmethod
+    def _build_store_context() -> StorageDriverStoreContext:
+        meta = _current_store_metadata.get()
+        return StorageDriverStoreContext(
+            namespace=meta.namespace if meta else None,
+            current_workflow=meta.current_workflow if meta else None,
+            current_activity=meta.current_activity if meta else None,
+            target_workflow=meta.target_workflow if meta else None,
+            target_activity=meta.target_activity if meta else None,
+        )
+
     async def _store_payload(self, payload: Payload) -> Payload:
         start_time = time.monotonic()
-        context = StorageDriverStoreContext(serialization_context=self._context)
+        context = self._build_store_context()
 
         driver = self._select_driver(context, payload)
         if driver is None:
@@ -335,7 +429,7 @@ class ExternalStorage(WithSerializationContext):
         start_time = time.monotonic()
 
         results = list(payloads)
-        context = StorageDriverStoreContext(serialization_context=self._context)
+        context = self._build_store_context()
 
         to_store: list[tuple[int, Payload, StorageDriver]] = []
         for index, payload in enumerate(payloads):

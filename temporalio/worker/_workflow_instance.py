@@ -58,6 +58,8 @@ import temporalio.common
 import temporalio.converter
 import temporalio.exceptions
 import temporalio.workflow
+from temporalio.converter import StorageDriverActivityInfo, StorageDriverWorkflowInfo
+from temporalio.converter._extstore import StorageDriverStoreMetadata
 from temporalio.service import __version__
 
 from ..api.failure.v1.message_pb2 import Failure
@@ -179,6 +181,21 @@ class WorkflowInstance(ABC):
 
         Returns:
             The serialization context, or None if no context should be set.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_external_store_metadata(
+        self,
+        command_info: _command_aware_visitor.CommandInfo | None,
+    ) -> StorageDriverStoreMetadata | None:
+        """Return appropriate store metadata for external storage operations.
+
+        Args:
+            command_info: Optional information identifying the associated command.
+
+        Returns:
+            The store metadata, or None if no metadata should be set.
         """
         raise NotImplementedError
 
@@ -1851,7 +1868,6 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
     # These are in alphabetical order and all start with "_outbound_".
 
     def _outbound_continue_as_new(self, input: ContinueAsNewInput) -> NoReturn:
-        # Just throw
         raise _ContinueAsNewError(self, input)
 
     def _outbound_schedule_activity(
@@ -2220,6 +2236,72 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             return temporalio.converter.WorkflowSerializationContext(
                 namespace=self._info.namespace,
                 workflow_id=self._info.workflow_id,
+            )
+
+    def get_external_store_metadata(
+        self,
+        command_info: _command_aware_visitor.CommandInfo | None,
+    ) -> StorageDriverStoreMetadata | None:
+        ns = self._info.namespace
+        current_wf = StorageDriverWorkflowInfo(
+            id=self._info.workflow_id,
+            run_id=self._info.run_id,
+            type=self._info.workflow_type,
+        )
+
+        if command_info is None:
+            return StorageDriverStoreMetadata(
+                namespace=ns,
+                current_workflow=current_wf,
+            )
+
+        COMMAND_TYPE = temporalio.api.enums.v1.command_type_pb2.CommandType
+
+        if (
+            command_info.command_type
+            == COMMAND_TYPE.COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK
+            and command_info.command_seq in self._pending_activities
+        ):
+            handle = self._pending_activities[command_info.command_seq]
+            return StorageDriverStoreMetadata(
+                namespace=ns,
+                current_workflow=current_wf,
+                target_activity=StorageDriverActivityInfo(
+                    id=handle._input.activity_id,
+                    type=handle._input.activity,
+                ),
+            )
+
+        elif (
+            command_info.command_type
+            == COMMAND_TYPE.COMMAND_TYPE_START_CHILD_WORKFLOW_EXECUTION
+            and command_info.command_seq in self._pending_child_workflows
+        ):
+            child = self._pending_child_workflows[command_info.command_seq]
+            return StorageDriverStoreMetadata(
+                namespace=ns,
+                current_workflow=current_wf,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=child._input.id, type=child._input.workflow
+                ),
+            )
+
+        elif (
+            command_info.command_type
+            == COMMAND_TYPE.COMMAND_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION
+            and command_info.command_seq in self._pending_external_signals
+        ):
+            _, target_id = self._pending_external_signals[command_info.command_seq]
+            return StorageDriverStoreMetadata(
+                namespace=ns,
+                current_workflow=current_wf,
+                target_workflow=StorageDriverWorkflowInfo(id=target_id),
+            )
+
+        else:
+            return StorageDriverStoreMetadata(
+                namespace=ns,
+                current_workflow=current_wf,
             )
 
     def _instantiate_workflow_object(self) -> Any:

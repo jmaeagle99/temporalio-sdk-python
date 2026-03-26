@@ -66,8 +66,14 @@ from temporalio.converter import (
     ActivitySerializationContext,
     DataConverter,
     SerializationContext,
+    StorageDriverActivityInfo,
+    StorageDriverWorkflowInfo,
     WithSerializationContext,
     WorkflowSerializationContext,
+)
+from temporalio.converter._extstore import (
+    StorageDriverStoreMetadata,
+    store_metadata_context,
 )
 from temporalio.service import (
     ConnectConfig,
@@ -6161,67 +6167,80 @@ class ScheduleActionStartWorkflow(ScheduleAction):
         priority: temporalio.api.common.v1.Priority | None = None
         if self.priority:
             priority = self.priority._to_proto()
-        data_converter = client.data_converter.with_context(
-            WorkflowSerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=client.namespace,
-                workflow_id=self.id,
-            )
-        )
-        action = temporalio.api.schedule.v1.ScheduleAction(
-            start_workflow=temporalio.api.workflow.v1.NewWorkflowExecutionInfo(
-                workflow_id=self.id,
-                workflow_type=temporalio.api.common.v1.WorkflowType(name=self.workflow),
-                task_queue=temporalio.api.taskqueue.v1.TaskQueue(name=self.task_queue),
-                input=(
-                    temporalio.api.common.v1.Payloads(
-                        payloads=[
-                            a
-                            if isinstance(a, temporalio.api.common.v1.Payload)
-                            else (await data_converter.encode([a]))[0]
-                            for a in self.args
-                        ]
-                    )
-                    if self.args
-                    else None
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=self.id, type=self.workflow
                 ),
-                workflow_execution_timeout=execution_timeout,
-                workflow_run_timeout=run_timeout,
-                workflow_task_timeout=task_timeout,
-                retry_policy=retry_policy,
-                memo=await data_converter._encode_memo(self.memo)
-                if self.memo
-                else None,
-                user_metadata=await _encode_user_metadata(
-                    data_converter, self.static_summary, self.static_details
+            )
+        ):
+            data_converter = client.data_converter.with_context(
+                WorkflowSerializationContext(
+                    namespace=client.namespace,
+                    workflow_id=self.id,
+                )
+            )
+            action = temporalio.api.schedule.v1.ScheduleAction(
+                start_workflow=temporalio.api.workflow.v1.NewWorkflowExecutionInfo(
+                    workflow_id=self.id,
+                    workflow_type=temporalio.api.common.v1.WorkflowType(
+                        name=self.workflow
+                    ),
+                    task_queue=temporalio.api.taskqueue.v1.TaskQueue(
+                        name=self.task_queue
+                    ),
+                    input=(
+                        temporalio.api.common.v1.Payloads(
+                            payloads=[
+                                a
+                                if isinstance(a, temporalio.api.common.v1.Payload)
+                                else (await data_converter.encode([a]))[0]
+                                for a in self.args
+                            ]
+                        )
+                        if self.args
+                        else None
+                    ),
+                    workflow_execution_timeout=execution_timeout,
+                    workflow_run_timeout=run_timeout,
+                    workflow_task_timeout=task_timeout,
+                    retry_policy=retry_policy,
+                    memo=await data_converter._encode_memo(self.memo)
+                    if self.memo
+                    else None,
+                    user_metadata=await _encode_user_metadata(
+                        data_converter, self.static_summary, self.static_details
+                    ),
+                    priority=priority,
                 ),
-                priority=priority,
-            ),
-        )
-        # Add any untyped attributes that are not also in the typed set
-        untyped_not_in_typed = {
-            k: v
-            for k, v in self.untyped_search_attributes.items()
-            if k not in self.typed_search_attributes
-        }
-        if untyped_not_in_typed:
-            temporalio.converter.encode_search_attributes(
-                untyped_not_in_typed, action.start_workflow.search_attributes
             )
-        # TODO (dan): confirm whether this be `is not None`
-        if self.typed_search_attributes:
-            temporalio.converter.encode_search_attributes(
-                self.typed_search_attributes, action.start_workflow.search_attributes
-            )
-        if self.headers:
-            await _apply_headers(
-                self.headers,
-                action.start_workflow.header.fields,
-                client.config(active_config=True)["header_codec_behavior"]
-                == HeaderCodecBehavior.CODEC
-                and not self._from_raw,
-                client.data_converter,
-            )
-        return action
+            # Add any untyped attributes that are not also in the typed set
+            untyped_not_in_typed = {
+                k: v
+                for k, v in self.untyped_search_attributes.items()
+                if k not in self.typed_search_attributes
+            }
+            if untyped_not_in_typed:
+                temporalio.converter.encode_search_attributes(
+                    untyped_not_in_typed, action.start_workflow.search_attributes
+                )
+            # TODO (dan): confirm whether this be `is not None`
+            if self.typed_search_attributes:
+                temporalio.converter.encode_search_attributes(
+                    self.typed_search_attributes,
+                    action.start_workflow.search_attributes,
+                )
+            if self.headers:
+                await _apply_headers(
+                    self.headers,
+                    action.start_workflow.header.fields,
+                    client.config(active_config=True)["header_codec_behavior"]
+                    == HeaderCodecBehavior.CODEC
+                    and not self._from_raw,
+                    client.data_converter,
+                )
+            return action
 
 
 class ScheduleOverlapPolicy(IntEnum):
@@ -8077,21 +8096,29 @@ class _ClientImpl(OutboundInterceptor):
         self, input: StartWorkflowInput
     ) -> temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest:
         assert input.start_signal
-        data_converter = self._client.data_converter.with_context(
-            WorkflowSerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                workflow_id=input.id,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=input.id, type=input.workflow
+                ),
             )
-        )
-        req = temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest(
-            signal_name=input.start_signal
-        )
-        if input.start_signal_args:
-            req.signal_input.payloads.extend(
-                await data_converter.encode(input.start_signal_args)
+        ):
+            data_converter = self._client.data_converter.with_context(
+                WorkflowSerializationContext(
+                    namespace=self._client.namespace,
+                    workflow_id=input.id,
+                )
             )
-        await self._populate_start_workflow_execution_request(req, input)
-        return req
+            req = temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest(
+                signal_name=input.start_signal
+            )
+            if input.start_signal_args:
+                req.signal_input.payloads.extend(
+                    await data_converter.encode(input.start_signal_args)
+                )
+            await self._populate_start_workflow_execution_request(req, input)
+            return req
 
     async def _build_update_with_start_start_workflow_execution_request(
         self, input: UpdateWithStartStartWorkflowInput
@@ -8108,57 +8135,65 @@ class _ClientImpl(OutboundInterceptor):
         ),
         input: StartWorkflowInput | UpdateWithStartStartWorkflowInput,
     ) -> None:
-        data_converter = self._client.data_converter.with_context(
-            WorkflowSerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                workflow_id=input.id,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=input.id, type=input.workflow
+                ),
             )
-        )
-        req.namespace = self._client.namespace
-        req.workflow_id = input.id
-        req.workflow_type.name = input.workflow
-        req.task_queue.name = input.task_queue
-        if input.args:
-            req.input.payloads.extend(await data_converter.encode(input.args))
-        if input.execution_timeout is not None:
-            req.workflow_execution_timeout.FromTimedelta(input.execution_timeout)
-        if input.run_timeout is not None:
-            req.workflow_run_timeout.FromTimedelta(input.run_timeout)
-        if input.task_timeout is not None:
-            req.workflow_task_timeout.FromTimedelta(input.task_timeout)
-        req.identity = self._client.identity
-        req.request_id = str(uuid.uuid4())
-        req.workflow_id_reuse_policy = cast(
-            "temporalio.api.enums.v1.WorkflowIdReusePolicy.ValueType",
-            int(input.id_reuse_policy),
-        )
-        req.workflow_id_conflict_policy = cast(
-            "temporalio.api.enums.v1.WorkflowIdConflictPolicy.ValueType",
-            int(input.id_conflict_policy),
-        )
+        ):
+            data_converter = self._client.data_converter.with_context(
+                WorkflowSerializationContext(
+                    namespace=self._client.namespace,
+                    workflow_id=input.id,
+                )
+            )
+            req.namespace = self._client.namespace
+            req.workflow_id = input.id
+            req.workflow_type.name = input.workflow
+            req.task_queue.name = input.task_queue
+            if input.args:
+                req.input.payloads.extend(await data_converter.encode(input.args))
+            if input.execution_timeout is not None:
+                req.workflow_execution_timeout.FromTimedelta(input.execution_timeout)
+            if input.run_timeout is not None:
+                req.workflow_run_timeout.FromTimedelta(input.run_timeout)
+            if input.task_timeout is not None:
+                req.workflow_task_timeout.FromTimedelta(input.task_timeout)
+            req.identity = self._client.identity
+            req.request_id = str(uuid.uuid4())
+            req.workflow_id_reuse_policy = cast(
+                "temporalio.api.enums.v1.WorkflowIdReusePolicy.ValueType",
+                int(input.id_reuse_policy),
+            )
+            req.workflow_id_conflict_policy = cast(
+                "temporalio.api.enums.v1.WorkflowIdConflictPolicy.ValueType",
+                int(input.id_conflict_policy),
+            )
 
-        if input.retry_policy is not None:
-            input.retry_policy.apply_to_proto(req.retry_policy)
-        req.cron_schedule = input.cron_schedule
-        if input.memo is not None:
-            await data_converter._encode_memo_existing(input.memo, req.memo)
-        if input.search_attributes is not None:
-            temporalio.converter.encode_search_attributes(
-                input.search_attributes, req.search_attributes
+            if input.retry_policy is not None:
+                input.retry_policy.apply_to_proto(req.retry_policy)
+            req.cron_schedule = input.cron_schedule
+            if input.memo is not None:
+                await data_converter._encode_memo_existing(input.memo, req.memo)
+            if input.search_attributes is not None:
+                temporalio.converter.encode_search_attributes(
+                    input.search_attributes, req.search_attributes
+                )
+            metadata = await _encode_user_metadata(
+                data_converter, input.static_summary, input.static_details
             )
-        metadata = await _encode_user_metadata(
-            data_converter, input.static_summary, input.static_details
-        )
-        if metadata is not None:
-            req.user_metadata.CopyFrom(metadata)
-        if input.start_delay is not None:
-            req.workflow_start_delay.FromTimedelta(input.start_delay)
-        if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
-            await self._apply_headers(input.headers, req.header.fields)
-        if input.priority is not None:  # type:ignore[reportUnnecessaryComparison]
-            req.priority.CopyFrom(input.priority._to_proto())
-        if input.versioning_override is not None:
-            req.versioning_override.CopyFrom(input.versioning_override._to_proto())
+            if metadata is not None:
+                req.user_metadata.CopyFrom(metadata)
+            if input.start_delay is not None:
+                req.workflow_start_delay.FromTimedelta(input.start_delay)
+            if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
+                await self._apply_headers(input.headers, req.header.fields)
+            if input.priority is not None:  # type:ignore[reportUnnecessaryComparison]
+                req.priority.CopyFrom(input.priority._to_proto())
+            if input.versioning_override is not None:
+                req.versioning_override.CopyFrom(input.versioning_override._to_proto())
 
     async def cancel_workflow(self, input: CancelWorkflowInput) -> None:
         await self._client.workflow_service.request_cancel_workflow_execution(
@@ -8228,105 +8263,134 @@ class _ClientImpl(OutboundInterceptor):
         )
 
     async def query_workflow(self, input: QueryWorkflowInput) -> Any:
-        data_converter = self._client.data_converter.with_context(
-            WorkflowSerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                workflow_id=input.id,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=input.id, run_id=input.run_id or None
+                ),
             )
-        )
-        req = temporalio.api.workflowservice.v1.QueryWorkflowRequest(
-            namespace=self._client.namespace,
-            execution=temporalio.api.common.v1.WorkflowExecution(
-                workflow_id=input.id,
-                run_id=input.run_id or "",
-            ),
-        )
-        if input.reject_condition:
-            req.query_reject_condition = cast(
-                "temporalio.api.enums.v1.QueryRejectCondition.ValueType",
-                int(input.reject_condition),
+        ):
+            data_converter = self._client.data_converter.with_context(
+                WorkflowSerializationContext(
+                    namespace=self._client.namespace,
+                    workflow_id=input.id,
+                )
             )
-        req.query.query_type = input.query
-        if input.args:
-            req.query.query_args.payloads.extend(
-                await data_converter.encode(input.args)
+            req = temporalio.api.workflowservice.v1.QueryWorkflowRequest(
+                namespace=self._client.namespace,
+                execution=temporalio.api.common.v1.WorkflowExecution(
+                    workflow_id=input.id,
+                    run_id=input.run_id or "",
+                ),
             )
-        if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
-            await self._apply_headers(input.headers, req.query.header.fields)
-        try:
-            resp = await self._client.workflow_service.query_workflow(
-                req, retry=True, metadata=input.rpc_metadata, timeout=input.rpc_timeout
+            if input.reject_condition:
+                req.query_reject_condition = cast(
+                    "temporalio.api.enums.v1.QueryRejectCondition.ValueType",
+                    int(input.reject_condition),
+                )
+            req.query.query_type = input.query
+            if input.args:
+                req.query.query_args.payloads.extend(
+                    await data_converter.encode(input.args)
+                )
+            if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
+                await self._apply_headers(input.headers, req.query.header.fields)
+            try:
+                resp = await self._client.workflow_service.query_workflow(
+                    req,
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+            except RPCError as err:
+                # If the status is INVALID_ARGUMENT, we can assume it's a query
+                # failed error
+                if err.status == RPCStatusCode.INVALID_ARGUMENT:
+                    raise WorkflowQueryFailedError(err.message)
+                else:
+                    raise
+            if resp.HasField("query_rejected"):
+                raise WorkflowQueryRejectedError(
+                    WorkflowExecutionStatus(resp.query_rejected.status)
+                    if resp.query_rejected.status
+                    else None
+                )
+            if not resp.query_result.payloads:
+                return None
+            type_hints = [input.ret_type] if input.ret_type else None
+            results = await data_converter.decode(
+                resp.query_result.payloads, type_hints
             )
-        except RPCError as err:
-            # If the status is INVALID_ARGUMENT, we can assume it's a query
-            # failed error
-            if err.status == RPCStatusCode.INVALID_ARGUMENT:
-                raise WorkflowQueryFailedError(err.message)
-            else:
-                raise
-        if resp.HasField("query_rejected"):
-            raise WorkflowQueryRejectedError(
-                WorkflowExecutionStatus(resp.query_rejected.status)
-                if resp.query_rejected.status
-                else None
-            )
-        if not resp.query_result.payloads:
-            return None
-        type_hints = [input.ret_type] if input.ret_type else None
-        results = await data_converter.decode(resp.query_result.payloads, type_hints)
-        if not results:
-            return None
-        elif len(results) > 1:
-            warnings.warn(f"Expected single query result, got {len(results)}")
-        return results[0]
+            if not results:
+                return None
+            elif len(results) > 1:
+                warnings.warn(f"Expected single query result, got {len(results)}")
+            return results[0]
 
     async def signal_workflow(self, input: SignalWorkflowInput) -> None:
-        data_converter = self._client.data_converter.with_context(
-            WorkflowSerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                workflow_id=input.id,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=input.id, run_id=input.run_id or None
+                ),
             )
-        )
-        req = temporalio.api.workflowservice.v1.SignalWorkflowExecutionRequest(
-            namespace=self._client.namespace,
-            workflow_execution=temporalio.api.common.v1.WorkflowExecution(
-                workflow_id=input.id,
-                run_id=input.run_id or "",
-            ),
-            signal_name=input.signal,
-            identity=self._client.identity,
-            request_id=str(uuid.uuid4()),
-        )
-        if input.args:
-            req.input.payloads.extend(await data_converter.encode(input.args))
-        if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
-            await self._apply_headers(input.headers, req.header.fields)
-        await self._client.workflow_service.signal_workflow_execution(
-            req, retry=True, metadata=input.rpc_metadata, timeout=input.rpc_timeout
-        )
+        ):
+            data_converter = self._client.data_converter.with_context(
+                WorkflowSerializationContext(
+                    namespace=self._client.namespace,
+                    workflow_id=input.id,
+                )
+            )
+            req = temporalio.api.workflowservice.v1.SignalWorkflowExecutionRequest(
+                namespace=self._client.namespace,
+                workflow_execution=temporalio.api.common.v1.WorkflowExecution(
+                    workflow_id=input.id,
+                    run_id=input.run_id or "",
+                ),
+                signal_name=input.signal,
+                identity=self._client.identity,
+                request_id=str(uuid.uuid4()),
+            )
+            if input.args:
+                req.input.payloads.extend(await data_converter.encode(input.args))
+            if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
+                await self._apply_headers(input.headers, req.header.fields)
+            await self._client.workflow_service.signal_workflow_execution(
+                req, retry=True, metadata=input.rpc_metadata, timeout=input.rpc_timeout
+            )
 
     async def terminate_workflow(self, input: TerminateWorkflowInput) -> None:
-        data_converter = self._client.data_converter.with_context(
-            WorkflowSerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                workflow_id=input.id,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=input.id, run_id=input.run_id or None
+                ),
             )
-        )
-        req = temporalio.api.workflowservice.v1.TerminateWorkflowExecutionRequest(
-            namespace=self._client.namespace,
-            workflow_execution=temporalio.api.common.v1.WorkflowExecution(
-                workflow_id=input.id,
-                run_id=input.run_id or "",
-            ),
-            reason=input.reason or "",
-            identity=self._client.identity,
-            first_execution_run_id=input.first_execution_run_id or "",
-        )
-        if input.args:
-            req.details.payloads.extend(await data_converter.encode(input.args))
-        await self._client.workflow_service.terminate_workflow_execution(
-            req, retry=True, metadata=input.rpc_metadata, timeout=input.rpc_timeout
-        )
+        ):
+            data_converter = self._client.data_converter.with_context(
+                WorkflowSerializationContext(
+                    namespace=self._client.namespace,
+                    workflow_id=input.id,
+                )
+            )
+            req = temporalio.api.workflowservice.v1.TerminateWorkflowExecutionRequest(
+                namespace=self._client.namespace,
+                workflow_execution=temporalio.api.common.v1.WorkflowExecution(
+                    workflow_id=input.id,
+                    run_id=input.run_id or "",
+                ),
+                reason=input.reason or "",
+                identity=self._client.identity,
+                first_execution_run_id=input.first_execution_run_id or "",
+            )
+            if input.args:
+                req.details.payloads.extend(await data_converter.encode(input.args))
+            await self._client.workflow_service.terminate_workflow_execution(
+                req, retry=True, metadata=input.rpc_metadata, timeout=input.rpc_timeout
+            )
 
     async def start_activity(self, input: StartActivityInput) -> ActivityHandle[Any]:
         """Start an activity and return a handle to it."""
@@ -8365,70 +8429,82 @@ class _ClientImpl(OutboundInterceptor):
         self, input: StartActivityInput
     ) -> temporalio.api.workflowservice.v1.StartActivityExecutionRequest:
         """Build StartActivityExecutionRequest from input."""
-        data_converter = self._client.data_converter.with_context(
-            ActivitySerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
+                target_activity=StorageDriverActivityInfo(
+                    id=input.id, type=input.activity_type
+                ),
+            )
+        ):
+            data_converter = self._client.data_converter.with_context(
+                ActivitySerializationContext(
+                    namespace=self._client.namespace,
+                    activity_id=input.id,
+                    activity_type=input.activity_type,
+                    activity_task_queue=input.task_queue,
+                    is_local=False,
+                    workflow_id=None,
+                    workflow_type=None,
+                )
+            )
+
+            req = temporalio.api.workflowservice.v1.StartActivityExecutionRequest(
+                namespace=self._client.namespace,
+                identity=self._client.identity,
                 activity_id=input.id,
-                activity_type=input.activity_type,
-                activity_task_queue=input.task_queue,
-                is_local=False,
-                workflow_id=None,
-                workflow_type=None,
-            )
-        )
-
-        req = temporalio.api.workflowservice.v1.StartActivityExecutionRequest(
-            namespace=self._client.namespace,
-            identity=self._client.identity,
-            activity_id=input.id,
-            activity_type=temporalio.api.common.v1.ActivityType(
-                name=input.activity_type
-            ),
-            task_queue=temporalio.api.taskqueue.v1.TaskQueue(name=input.task_queue),
-            id_reuse_policy=cast(
-                "temporalio.api.enums.v1.ActivityIdReusePolicy.ValueType",
-                int(input.id_reuse_policy),
-            ),
-            id_conflict_policy=cast(
-                "temporalio.api.enums.v1.ActivityIdConflictPolicy.ValueType",
-                int(input.id_conflict_policy),
-            ),
-        )
-
-        if input.schedule_to_close_timeout is not None:
-            req.schedule_to_close_timeout.FromTimedelta(input.schedule_to_close_timeout)
-        if input.start_to_close_timeout is not None:
-            req.start_to_close_timeout.FromTimedelta(input.start_to_close_timeout)
-        if input.schedule_to_start_timeout is not None:
-            req.schedule_to_start_timeout.FromTimedelta(input.schedule_to_start_timeout)
-        if input.heartbeat_timeout is not None:
-            req.heartbeat_timeout.FromTimedelta(input.heartbeat_timeout)
-        if input.retry_policy is not None:
-            input.retry_policy.apply_to_proto(req.retry_policy)
-
-        # Set input payloads
-        if input.args:
-            req.input.payloads.extend(await data_converter.encode(input.args))
-
-        # Set search attributes
-        if input.search_attributes is not None:
-            temporalio.converter.encode_search_attributes(
-                input.search_attributes, req.search_attributes
+                activity_type=temporalio.api.common.v1.ActivityType(
+                    name=input.activity_type
+                ),
+                task_queue=temporalio.api.taskqueue.v1.TaskQueue(name=input.task_queue),
+                id_reuse_policy=cast(
+                    "temporalio.api.enums.v1.ActivityIdReusePolicy.ValueType",
+                    int(input.id_reuse_policy),
+                ),
+                id_conflict_policy=cast(
+                    "temporalio.api.enums.v1.ActivityIdConflictPolicy.ValueType",
+                    int(input.id_conflict_policy),
+                ),
             )
 
-        # Set user metadata
-        metadata = await _encode_user_metadata(data_converter, input.summary, None)
-        if metadata is not None:
-            req.user_metadata.CopyFrom(metadata)
+            if input.schedule_to_close_timeout is not None:
+                req.schedule_to_close_timeout.FromTimedelta(
+                    input.schedule_to_close_timeout
+                )
+            if input.start_to_close_timeout is not None:
+                req.start_to_close_timeout.FromTimedelta(input.start_to_close_timeout)
+            if input.schedule_to_start_timeout is not None:
+                req.schedule_to_start_timeout.FromTimedelta(
+                    input.schedule_to_start_timeout
+                )
+            if input.heartbeat_timeout is not None:
+                req.heartbeat_timeout.FromTimedelta(input.heartbeat_timeout)
+            if input.retry_policy is not None:
+                input.retry_policy.apply_to_proto(req.retry_policy)
 
-        # Set headers
-        if input.headers:
-            await self._apply_headers(input.headers, req.header.fields)
+            # Set input payloads
+            if input.args:
+                req.input.payloads.extend(await data_converter.encode(input.args))
 
-        # Set priority
-        req.priority.CopyFrom(input.priority._to_proto())
+            # Set search attributes
+            if input.search_attributes is not None:
+                temporalio.converter.encode_search_attributes(
+                    input.search_attributes, req.search_attributes
+                )
 
-        return req
+            # Set user metadata
+            metadata = await _encode_user_metadata(data_converter, input.summary, None)
+            if metadata is not None:
+                req.user_metadata.CopyFrom(metadata)
+
+            # Set headers
+            if input.headers:
+                await self._apply_headers(input.headers, req.header.fields)
+
+            # Set priority
+            req.priority.CopyFrom(input.priority._to_proto())
+
+            return req
 
     async def cancel_activity(self, input: CancelActivityInput) -> None:
         """Cancel an activity."""
@@ -8560,49 +8636,62 @@ class _ClientImpl(OutboundInterceptor):
         input: StartWorkflowUpdateInput | UpdateWithStartUpdateWorkflowInput,
         workflow_id: str,
     ) -> temporalio.api.workflowservice.v1.UpdateWorkflowExecutionRequest:
-        data_converter = self._client.data_converter.with_context(
-            WorkflowSerializationContext(
+        with store_metadata_context(
+            StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                workflow_id=workflow_id,
-            )
-        )
-        run_id, first_execution_run_id = (
-            (
-                input.run_id,
-                input.first_execution_run_id,
-            )
-            if isinstance(input, StartWorkflowUpdateInput)
-            else (None, None)
-        )
-        req = temporalio.api.workflowservice.v1.UpdateWorkflowExecutionRequest(
-            namespace=self._client.namespace,
-            workflow_execution=temporalio.api.common.v1.WorkflowExecution(
-                workflow_id=workflow_id,
-                run_id=run_id or "",
-            ),
-            first_execution_run_id=first_execution_run_id or "",
-            request=temporalio.api.update.v1.Request(
-                meta=temporalio.api.update.v1.Meta(
-                    update_id=input.update_id or str(uuid.uuid4()),
-                    identity=self._client.identity,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=workflow_id,
+                    run_id=(input.run_id or None)
+                    if isinstance(input, StartWorkflowUpdateInput)
+                    else None,
                 ),
-                input=temporalio.api.update.v1.Input(
-                    name=input.update,
-                ),
-            ),
-            wait_policy=temporalio.api.update.v1.WaitPolicy(
-                lifecycle_stage=temporalio.api.enums.v1.UpdateWorkflowExecutionLifecycleStage.ValueType(
-                    input.wait_for_stage
+            )
+        ):
+            data_converter = self._client.data_converter.with_context(
+                WorkflowSerializationContext(
+                    namespace=self._client.namespace,
+                    workflow_id=workflow_id,
                 )
-            ),
-        )
-        if input.args:
-            req.request.input.args.payloads.extend(
-                await data_converter.encode(input.args)
             )
-        if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
-            await self._apply_headers(input.headers, req.request.input.header.fields)
-        return req
+            run_id, first_execution_run_id = (
+                (
+                    input.run_id,
+                    input.first_execution_run_id,
+                )
+                if isinstance(input, StartWorkflowUpdateInput)
+                else (None, None)
+            )
+            req = temporalio.api.workflowservice.v1.UpdateWorkflowExecutionRequest(
+                namespace=self._client.namespace,
+                workflow_execution=temporalio.api.common.v1.WorkflowExecution(
+                    workflow_id=workflow_id,
+                    run_id=run_id or "",
+                ),
+                first_execution_run_id=first_execution_run_id or "",
+                request=temporalio.api.update.v1.Request(
+                    meta=temporalio.api.update.v1.Meta(
+                        update_id=input.update_id or str(uuid.uuid4()),
+                        identity=self._client.identity,
+                    ),
+                    input=temporalio.api.update.v1.Input(
+                        name=input.update,
+                    ),
+                ),
+                wait_policy=temporalio.api.update.v1.WaitPolicy(
+                    lifecycle_stage=temporalio.api.enums.v1.UpdateWorkflowExecutionLifecycleStage.ValueType(
+                        input.wait_for_stage
+                    )
+                ),
+            )
+            if input.args:
+                req.request.input.args.payloads.extend(
+                    await data_converter.encode(input.args)
+                )
+            if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
+                await self._apply_headers(
+                    input.headers, req.request.input.header.fields
+                )
+            return req
 
     async def start_update_with_start_workflow(
         self, input: StartWorkflowUpdateWithStartInput
@@ -8739,171 +8828,212 @@ class _ClientImpl(OutboundInterceptor):
 
     ### Async activity calls
 
+    def _get_async_activity_store_metadata(
+        self, id_or_token: AsyncActivityIDReference | bytes
+    ) -> StorageDriverStoreMetadata:
+        if isinstance(id_or_token, AsyncActivityIDReference):
+            return StorageDriverStoreMetadata(
+                namespace=self._client.namespace,
+                target_workflow=StorageDriverWorkflowInfo(
+                    id=id_or_token.workflow_id or None,
+                    run_id=id_or_token.run_id or None,
+                )
+                if id_or_token.workflow_id
+                else None,
+                target_activity=StorageDriverActivityInfo(
+                    id=id_or_token.activity_id,
+                ),
+            )
+        else:
+            return StorageDriverStoreMetadata(
+                namespace=self._client.namespace,
+            )
+
     async def heartbeat_async_activity(
         self, input: HeartbeatAsyncActivityInput
     ) -> None:
-        data_converter = input.data_converter_override or self._client.data_converter
-        details = (
-            None
-            if not input.details
-            else await data_converter.encode_wrapper(input.details)
-        )
-        if isinstance(input.id_or_token, AsyncActivityIDReference):
-            resp_by_id = await self._client.workflow_service.record_activity_task_heartbeat_by_id(
-                temporalio.api.workflowservice.v1.RecordActivityTaskHeartbeatByIdRequest(
-                    workflow_id=input.id_or_token.workflow_id or "",
-                    run_id=input.id_or_token.run_id or "",
-                    activity_id=input.id_or_token.activity_id,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    details=details,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
+        with store_metadata_context(
+            self._get_async_activity_store_metadata(input.id_or_token)
+        ):
+            data_converter = (
+                input.data_converter_override or self._client.data_converter
             )
-            if (
-                resp_by_id.cancel_requested
-                or resp_by_id.activity_paused
-                or resp_by_id.activity_reset
-            ):
-                raise AsyncActivityCancelledError(
-                    details=ActivityCancellationDetails(
-                        cancel_requested=resp_by_id.cancel_requested,
-                        paused=resp_by_id.activity_paused,
-                        reset=resp_by_id.activity_reset,
-                    )
+            details = (
+                None
+                if not input.details
+                else await data_converter.encode_wrapper(input.details)
+            )
+            if isinstance(input.id_or_token, AsyncActivityIDReference):
+                resp_by_id = await self._client.workflow_service.record_activity_task_heartbeat_by_id(
+                    temporalio.api.workflowservice.v1.RecordActivityTaskHeartbeatByIdRequest(
+                        workflow_id=input.id_or_token.workflow_id or "",
+                        run_id=input.id_or_token.run_id or "",
+                        activity_id=input.id_or_token.activity_id,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        details=details,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
                 )
+                if (
+                    resp_by_id.cancel_requested
+                    or resp_by_id.activity_paused
+                    or resp_by_id.activity_reset
+                ):
+                    raise AsyncActivityCancelledError(
+                        details=ActivityCancellationDetails(
+                            cancel_requested=resp_by_id.cancel_requested,
+                            paused=resp_by_id.activity_paused,
+                            reset=resp_by_id.activity_reset,
+                        )
+                    )
 
-        else:
-            resp = await self._client.workflow_service.record_activity_task_heartbeat(
-                temporalio.api.workflowservice.v1.RecordActivityTaskHeartbeatRequest(
-                    task_token=input.id_or_token,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    details=details,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
-            )
-            if resp.cancel_requested or resp.activity_paused:
-                raise AsyncActivityCancelledError(
-                    details=ActivityCancellationDetails(
-                        cancel_requested=resp.cancel_requested,
-                        paused=resp.activity_paused,
-                        reset=resp.activity_reset,
-                    )
+            else:
+                resp = await self._client.workflow_service.record_activity_task_heartbeat(
+                    temporalio.api.workflowservice.v1.RecordActivityTaskHeartbeatRequest(
+                        task_token=input.id_or_token,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        details=details,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
                 )
+                if resp.cancel_requested or resp.activity_paused:
+                    raise AsyncActivityCancelledError(
+                        details=ActivityCancellationDetails(
+                            cancel_requested=resp.cancel_requested,
+                            paused=resp.activity_paused,
+                            reset=resp.activity_reset,
+                        )
+                    )
 
     async def complete_async_activity(self, input: CompleteAsyncActivityInput) -> None:
-        data_converter = input.data_converter_override or self._client.data_converter
-        result = (
-            None
-            if input.result is temporalio.common._arg_unset
-            else await data_converter.encode_wrapper([input.result])
-        )
-        if isinstance(input.id_or_token, AsyncActivityIDReference):
-            await self._client.workflow_service.respond_activity_task_completed_by_id(
-                temporalio.api.workflowservice.v1.RespondActivityTaskCompletedByIdRequest(
-                    workflow_id=input.id_or_token.workflow_id or "",
-                    run_id=input.id_or_token.run_id or "",
-                    activity_id=input.id_or_token.activity_id,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    result=result,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
+        with store_metadata_context(
+            self._get_async_activity_store_metadata(input.id_or_token)
+        ):
+            data_converter = (
+                input.data_converter_override or self._client.data_converter
             )
-        else:
-            await self._client.workflow_service.respond_activity_task_completed(
-                temporalio.api.workflowservice.v1.RespondActivityTaskCompletedRequest(
-                    task_token=input.id_or_token,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    result=result,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
+            result = (
+                None
+                if input.result is temporalio.common._arg_unset
+                else await data_converter.encode_wrapper([input.result])
             )
+            if isinstance(input.id_or_token, AsyncActivityIDReference):
+                await self._client.workflow_service.respond_activity_task_completed_by_id(
+                    temporalio.api.workflowservice.v1.RespondActivityTaskCompletedByIdRequest(
+                        workflow_id=input.id_or_token.workflow_id or "",
+                        run_id=input.id_or_token.run_id or "",
+                        activity_id=input.id_or_token.activity_id,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        result=result,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+            else:
+                await self._client.workflow_service.respond_activity_task_completed(
+                    temporalio.api.workflowservice.v1.RespondActivityTaskCompletedRequest(
+                        task_token=input.id_or_token,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        result=result,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
 
     async def fail_async_activity(self, input: FailAsyncActivityInput) -> None:
-        data_converter = input.data_converter_override or self._client.data_converter
+        with store_metadata_context(
+            self._get_async_activity_store_metadata(input.id_or_token)
+        ):
+            data_converter = (
+                input.data_converter_override or self._client.data_converter
+            )
 
-        failure = temporalio.api.failure.v1.Failure()
-        await data_converter.encode_failure(input.error, failure)
-        last_heartbeat_details = (
-            await data_converter.encode_wrapper(input.last_heartbeat_details)
-            if input.last_heartbeat_details
-            else None
-        )
-        if isinstance(input.id_or_token, AsyncActivityIDReference):
-            await self._client.workflow_service.respond_activity_task_failed_by_id(
-                temporalio.api.workflowservice.v1.RespondActivityTaskFailedByIdRequest(
-                    workflow_id=input.id_or_token.workflow_id or "",
-                    run_id=input.id_or_token.run_id or "",
-                    activity_id=input.id_or_token.activity_id,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    failure=failure,
-                    last_heartbeat_details=last_heartbeat_details,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
+            failure = temporalio.api.failure.v1.Failure()
+            await data_converter.encode_failure(input.error, failure)
+            last_heartbeat_details = (
+                await data_converter.encode_wrapper(input.last_heartbeat_details)
+                if input.last_heartbeat_details
+                else None
             )
-        else:
-            await self._client.workflow_service.respond_activity_task_failed(
-                temporalio.api.workflowservice.v1.RespondActivityTaskFailedRequest(
-                    task_token=input.id_or_token,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    failure=failure,
-                    last_heartbeat_details=last_heartbeat_details,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
-            )
+            if isinstance(input.id_or_token, AsyncActivityIDReference):
+                await self._client.workflow_service.respond_activity_task_failed_by_id(
+                    temporalio.api.workflowservice.v1.RespondActivityTaskFailedByIdRequest(
+                        workflow_id=input.id_or_token.workflow_id or "",
+                        run_id=input.id_or_token.run_id or "",
+                        activity_id=input.id_or_token.activity_id,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        failure=failure,
+                        last_heartbeat_details=last_heartbeat_details,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+            else:
+                await self._client.workflow_service.respond_activity_task_failed(
+                    temporalio.api.workflowservice.v1.RespondActivityTaskFailedRequest(
+                        task_token=input.id_or_token,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        failure=failure,
+                        last_heartbeat_details=last_heartbeat_details,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
 
     async def report_cancellation_async_activity(
         self, input: ReportCancellationAsyncActivityInput
     ) -> None:
-        data_converter = input.data_converter_override or self._client.data_converter
-        details = (
-            None
-            if not input.details
-            else await data_converter.encode_wrapper(input.details)
-        )
-        if isinstance(input.id_or_token, AsyncActivityIDReference):
-            await self._client.workflow_service.respond_activity_task_canceled_by_id(
-                temporalio.api.workflowservice.v1.RespondActivityTaskCanceledByIdRequest(
-                    workflow_id=input.id_or_token.workflow_id or "",
-                    run_id=input.id_or_token.run_id or "",
-                    activity_id=input.id_or_token.activity_id,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    details=details,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
+        with store_metadata_context(
+            self._get_async_activity_store_metadata(input.id_or_token)
+        ):
+            data_converter = (
+                input.data_converter_override or self._client.data_converter
             )
-        else:
-            await self._client.workflow_service.respond_activity_task_canceled(
-                temporalio.api.workflowservice.v1.RespondActivityTaskCanceledRequest(
-                    task_token=input.id_or_token,
-                    namespace=self._client.namespace,
-                    identity=self._client.identity,
-                    details=details,
-                ),
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
+            details = (
+                None
+                if not input.details
+                else await data_converter.encode_wrapper(input.details)
             )
+            if isinstance(input.id_or_token, AsyncActivityIDReference):
+                await self._client.workflow_service.respond_activity_task_canceled_by_id(
+                    temporalio.api.workflowservice.v1.RespondActivityTaskCanceledByIdRequest(
+                        workflow_id=input.id_or_token.workflow_id or "",
+                        run_id=input.id_or_token.run_id or "",
+                        activity_id=input.id_or_token.activity_id,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        details=details,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+            else:
+                await self._client.workflow_service.respond_activity_task_canceled(
+                    temporalio.api.workflowservice.v1.RespondActivityTaskCanceledRequest(
+                        task_token=input.id_or_token,
+                        namespace=self._client.namespace,
+                        identity=self._client.identity,
+                        details=details,
+                    ),
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
 
     ### Schedule calls
 
@@ -8940,27 +9070,35 @@ class _ClientImpl(OutboundInterceptor):
                 else None,
             )
         try:
-            request = temporalio.api.workflowservice.v1.CreateScheduleRequest(
-                namespace=self._client.namespace,
-                schedule_id=input.id,
-                schedule=await input.schedule._to_proto(self._client),
-                initial_patch=initial_patch,
-                identity=self._client.identity,
-                request_id=str(uuid.uuid4()),
-                memo=await self._client.data_converter._encode_memo(input.memo)
-                if input.memo
-                else None,
-            )
-            if input.search_attributes:
-                temporalio.converter.encode_search_attributes(
-                    input.search_attributes, request.search_attributes
+            # Set namespace-level store metadata as a baseline for schedule
+            # encoding. The schedule action's _to_proto will override with
+            # workflow-specific metadata for its own encoding.
+            with store_metadata_context(
+                StorageDriverStoreMetadata(
+                    namespace=self._client.namespace,
                 )
-            await self._client.workflow_service.create_schedule(
-                request,
-                retry=True,
-                metadata=input.rpc_metadata,
-                timeout=input.rpc_timeout,
-            )
+            ):
+                request = temporalio.api.workflowservice.v1.CreateScheduleRequest(
+                    namespace=self._client.namespace,
+                    schedule_id=input.id,
+                    schedule=await input.schedule._to_proto(self._client),
+                    initial_patch=initial_patch,
+                    identity=self._client.identity,
+                    request_id=str(uuid.uuid4()),
+                    memo=await self._client.data_converter._encode_memo(input.memo)
+                    if input.memo
+                    else None,
+                )
+                if input.search_attributes:
+                    temporalio.converter.encode_search_attributes(
+                        input.search_attributes, request.search_attributes
+                    )
+                await self._client.workflow_service.create_schedule(
+                    request,
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
         except RPCError as err:
             already_started = (
                 err.status == RPCStatusCode.ALREADY_EXISTS
