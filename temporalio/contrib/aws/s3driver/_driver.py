@@ -1,3 +1,9 @@
+"""Amazon S3 storage driver for Temporal external storage.
+
+.. warning::
+    This API is experimental.
+"""
+
 from __future__ import annotations
 
 import asyncio

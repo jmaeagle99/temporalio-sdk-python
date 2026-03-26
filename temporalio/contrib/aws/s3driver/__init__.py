@@ -1,4 +1,4 @@
-"""Amazon S3 storage driver for Temporal external payload storage.
+"""Amazon S3 storage driver for Temporal external storage.
 
 .. warning::
     This API is experimental.
