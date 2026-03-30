@@ -16,9 +16,11 @@ from temporalio.api.common.v1 import Payload
 from temporalio.contrib.aws.s3driver._client import S3StorageDriverClient
 from temporalio.converter import (
     StorageDriver,
+    StorageDriverActivityInfo,
     StorageDriverClaim,
     StorageDriverRetrieveContext,
     StorageDriverStoreContext,
+    StorageDriverWorkflowInfo,
 )
 
 _T = TypeVar("_T")
@@ -118,21 +120,18 @@ class S3StorageDriver(StorageDriver):
         namespace = _quote(context.namespace)
         namespace_segment = f"/ns/{namespace}" if namespace else ""
 
-        # Build context segments from structured metadata.
-        # Prefer current workflow context; fall back to target_workflow for
-        # client-initiated operations where there is no current workflow.
+        # Build context segments from the target identity.
         context_segments = ""
-        wf = context.current_workflow or context.target_workflow
-        act = context.current_activity or context.target_activity
-        if wf and wf.id:
-            wf_type = _quote(wf.type) or "null"
-            wf_id = _quote(wf.id)
-            wf_run_id = _quote(wf.run_id) or "null"
+        target = context.target
+        if isinstance(target, StorageDriverWorkflowInfo):
+            wf_type = _quote(target.type) or "null"
+            wf_id = _quote(target.id) or "null"
+            wf_run_id = _quote(target.run_id) or "null"
             context_segments = f"/wt/{wf_type}/wi/{wf_id}/ri/{wf_run_id}"
-        elif act and act.id:
-            act_type = _quote(act.type) or "null"
-            act_id = _quote(act.id)
-            act_run_id = _quote(act.run_id) or "null"
+        elif isinstance(target, StorageDriverActivityInfo):
+            act_type = _quote(target.type) or "null"
+            act_id = _quote(target.id) or "null"
+            act_run_id = _quote(target.run_id) or "null"
             context_segments = f"/at/{act_type}/ai/{act_id}/ri/{act_run_id}"
 
         async def _upload(payload: Payload) -> StorageDriverClaim:

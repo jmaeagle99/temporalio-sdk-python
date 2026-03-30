@@ -6170,9 +6170,7 @@ class ScheduleActionStartWorkflow(ScheduleAction):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
-                    id=self.id, type=self.workflow
-                ),
+                target=StorageDriverWorkflowInfo(id=self.id, type=self.workflow),
             )
         ):
             data_converter = client.data_converter.with_context(
@@ -8099,9 +8097,7 @@ class _ClientImpl(OutboundInterceptor):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
-                    id=input.id, type=input.workflow
-                ),
+                target=StorageDriverWorkflowInfo(id=input.id, type=input.workflow),
             )
         ):
             data_converter = self._client.data_converter.with_context(
@@ -8138,9 +8134,7 @@ class _ClientImpl(OutboundInterceptor):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
-                    id=input.id, type=input.workflow
-                ),
+                target=StorageDriverWorkflowInfo(id=input.id, type=input.workflow),
             )
         ):
             data_converter = self._client.data_converter.with_context(
@@ -8266,7 +8260,7 @@ class _ClientImpl(OutboundInterceptor):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
+                target=StorageDriverWorkflowInfo(
                     id=input.id, run_id=input.run_id or None
                 ),
             )
@@ -8332,7 +8326,7 @@ class _ClientImpl(OutboundInterceptor):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
+                target=StorageDriverWorkflowInfo(
                     id=input.id, run_id=input.run_id or None
                 ),
             )
@@ -8365,7 +8359,7 @@ class _ClientImpl(OutboundInterceptor):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
+                target=StorageDriverWorkflowInfo(
                     id=input.id, run_id=input.run_id or None
                 ),
             )
@@ -8432,9 +8426,7 @@ class _ClientImpl(OutboundInterceptor):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_activity=StorageDriverActivityInfo(
-                    id=input.id, type=input.activity_type
-                ),
+                target=StorageDriverActivityInfo(id=input.id, type=input.activity_type),
             )
         ):
             data_converter = self._client.data_converter.with_context(
@@ -8639,7 +8631,7 @@ class _ClientImpl(OutboundInterceptor):
         with store_metadata_context(
             StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
+                target=StorageDriverWorkflowInfo(
                     id=workflow_id,
                     run_id=(input.run_id or None)
                     if isinstance(input, StartWorkflowUpdateInput)
@@ -8832,16 +8824,19 @@ class _ClientImpl(OutboundInterceptor):
         self, id_or_token: AsyncActivityIDReference | bytes
     ) -> StorageDriverStoreMetadata:
         if isinstance(id_or_token, AsyncActivityIDReference):
+            if id_or_token.workflow_id:
+                return StorageDriverStoreMetadata(
+                    namespace=self._client.namespace,
+                    target=StorageDriverWorkflowInfo(
+                        id=id_or_token.workflow_id or None,
+                        run_id=id_or_token.run_id or None,
+                    ),
+                )
             return StorageDriverStoreMetadata(
                 namespace=self._client.namespace,
-                target_workflow=StorageDriverWorkflowInfo(
-                    id=id_or_token.workflow_id or None,
-                    run_id=id_or_token.run_id or None,
-                )
-                if id_or_token.workflow_id
-                else None,
-                target_activity=StorageDriverActivityInfo(
+                target=StorageDriverActivityInfo(
                     id=id_or_token.activity_id,
+                    run_id=id_or_token.run_id or None,
                 ),
             )
         else:

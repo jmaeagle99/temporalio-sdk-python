@@ -190,6 +190,46 @@ async def test_s3_driver_workflow_activity_output_key(
     assert "/ri/null/" not in keys[0]
 
 
+async def test_s3_driver_standalone_activity_input_key(
+    tmprl_client: Client, aioboto3_client: S3Client
+) -> None:
+    activity_id = str(uuid.uuid4())
+    task_queue = str(uuid.uuid4())
+    async with new_worker(tmprl_client, activities=[large_io_activity], task_queue=task_queue):
+        await tmprl_client.execute_activity(
+            large_io_activity,
+            LARGE,
+            id=activity_id,
+            task_queue=task_queue,
+            start_to_close_timeout=timedelta(seconds=5),
+        )
+    keys = await _list_keys(aioboto3_client)
+    # Input and output are the same LARGE bytes, so they deduplicate to one key.
+    assert len(keys) == 1
+    # Keyed under the activity, not a workflow.
+    assert f"/ns/default/at/large_io_activity/ai/{activity_id}/ri/null/" in keys[0]
+    assert "/wt/" not in keys[0]
+
+
+async def test_s3_driver_standalone_activity_output_key(
+    tmprl_client: Client, aioboto3_client: S3Client
+) -> None:
+    activity_id = str(uuid.uuid4())
+    task_queue = str(uuid.uuid4())
+    async with new_worker(tmprl_client, activities=[large_output_activity], task_queue=task_queue):
+        await tmprl_client.execute_activity(
+            large_output_activity,
+            id=activity_id,
+            task_queue=task_queue,
+            start_to_close_timeout=timedelta(seconds=5),
+        )
+    keys = await _list_keys(aioboto3_client)
+    # Only the output is large; keyed under the activity.
+    assert len(keys) == 1
+    assert f"/ns/default/at/large_output_activity/ai/{activity_id}/ri/null/" in keys[0]
+    assert "/wt/" not in keys[0]
+
+
 async def test_s3_driver_signal_arg_key(
     tmprl_client: Client, aioboto3_client: S3Client
 ) -> None:
@@ -275,12 +315,10 @@ async def test_s3_driver_child_workflow_input_key(
         )
     keys = await _list_keys(aioboto3_client)
     child_workflow_id = f"{workflow_id}-child"
-    # Child input is the only large payload — stored under the parent's wi/ri.
+    # Child input is the only large payload — stored under the child's wi/ri.
     assert len(keys) == 1
-    # Keyed under the parent: it is the current execution context when scheduling the child.
-    assert f"/ns/default/wt/ParentWithChildWorkflow/wi/{workflow_id}/ri/" in keys[0]
-    # Not keyed under the child: the payload lives in the parent's history, not the child's.
-    assert f"/wi/{child_workflow_id}/" not in keys[0]
+    # Keyed under the child: child input is stored in the child's context.
+    assert f"/ns/default/wt/ChildWorkflow/wi/{child_workflow_id}/ri/" in keys[0]
 
 
 async def test_s3_driver_identified_casing(
@@ -386,12 +424,12 @@ async def test_s3_driver_parent_child_independent_key_namespaces(
     keys = await _list_keys(aioboto3_client)
     parent_keys = [k for k in keys if f"/wi/{workflow_id}/" in k]
     child_keys = [k for k in keys if f"/wi/{payment_id}/" in k]
-    # Parent accumulates 3 keys: client start (ri=null), child input (ri=run_id,
-    # keyed under parent because parent is scheduling context), and child result
-    # propagated back to parent (ri=run_id).
-    assert len(parent_keys) == 3
-    # Child accumulates 1 key: its own result (LARGE_2, ri=child_run_id).
-    assert len(child_keys) == 1
+    # Parent accumulates 2 keys: client start (ri=null, LARGE input) and child
+    # result propagated back to parent as workflow result (ri=run_id, LARGE_2).
+    assert len(parent_keys) == 2
+    # Child accumulates 2 keys: its input from parent (ri=null, LARGE) and its
+    # own result (ri=child_run_id, LARGE_2).
+    assert len(child_keys) == 2
 
 
 async def test_s3_store_failure_surfaces_in_workflow_history(

@@ -135,19 +135,8 @@ class StorageDriverStoreMetadata:
     namespace: str | None = None
     """The namespace of the current execution context."""
 
-    current_workflow: StorageDriverWorkflowInfo | None = None
-    """The workflow execution context from which this payload is being stored, if any."""
-
-    current_activity: StorageDriverActivityInfo | None = None
-    """The activity execution context from which this payload is being stored, if any.
-    Set only when running inside an activity worker."""
-
-    target_workflow: StorageDriverWorkflowInfo | None = None
-    """The workflow for which this payload is being stored (e.g. child workflow being
-    started, external workflow being signaled)."""
-
-    target_activity: StorageDriverActivityInfo | None = None
-    """The activity for which this payload is being stored."""
+    target: StorageDriverActivityInfo | StorageDriverWorkflowInfo | None = None
+    """The workflow or activity for which this payload is being stored."""
 
 
 _current_store_metadata: contextvars.ContextVar[StorageDriverStoreMetadata | None] = (
@@ -184,19 +173,14 @@ class StorageDriverStoreContext:
     namespace: str | None = None
     """The namespace of the current execution context."""
 
-    current_workflow: StorageDriverWorkflowInfo | None = None
-    """The workflow execution context from which this payload is being stored, if any."""
+    target: StorageDriverActivityInfo | StorageDriverWorkflowInfo | None = None
+    """The workflow or activity for which this payload is being stored.
 
-    current_activity: StorageDriverActivityInfo | None = None
-    """The activity execution context from which this payload is being stored, if any.
-    Set only when running inside an activity worker."""
-
-    target_workflow: StorageDriverWorkflowInfo | None = None
-    """The workflow for which this payload is being stored (e.g. child workflow being
-    started, external workflow being signaled)."""
-
-    target_activity: StorageDriverActivityInfo | None = None
-    """The activity for which this payload is being stored."""
+    For payloads being stored on behalf of an explicit target (e.g. a child
+    workflow being started, an activity being scheduled, an external workflow
+    being signaled), this is that target's identity.  When no explicit target
+    exists the current execution context (workflow or activity) is used as the
+    target instead."""
 
 
 @dataclass(frozen=True)
@@ -380,10 +364,7 @@ class ExternalStorage:
         meta = _current_store_metadata.get()
         return StorageDriverStoreContext(
             namespace=meta.namespace if meta else None,
-            current_workflow=meta.current_workflow if meta else None,
-            current_activity=meta.current_activity if meta else None,
-            target_workflow=meta.target_workflow if meta else None,
-            target_activity=meta.target_activity if meta else None,
+            target=meta.target if meta else None,
         )
 
     async def _store_payload(self, payload: Payload) -> Payload:

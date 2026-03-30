@@ -306,7 +306,7 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
             with store_metadata_context(
                 StorageDriverStoreMetadata(
                     namespace=self._namespace,
-                    current_workflow=StorageDriverWorkflowInfo(
+                    target=StorageDriverWorkflowInfo(
                         id=workflow_id,
                         run_id=act.run_id,
                         type=(

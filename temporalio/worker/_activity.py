@@ -270,19 +270,9 @@ class _ActivityWorker:
             )
             data_converter = data_converter.with_context(context)
 
-            wf_info = (
-                StorageDriverWorkflowInfo(
-                    id=activity.info.workflow_id,
-                    run_id=activity.info.workflow_run_id,
-                    type=activity.info.workflow_type,
-                )
-                if activity.info.workflow_id
-                else None
-            )
             store_metadata = StorageDriverStoreMetadata(
                 namespace=activity.info.namespace,
-                current_workflow=wf_info,
-                current_activity=StorageDriverActivityInfo(
+                target=StorageDriverActivityInfo(
                     id=activity.info.activity_id,
                     type=activity.info.activity_type,
                     run_id=activity.info.activity_run_id,
@@ -344,30 +334,24 @@ class _ActivityWorker:
 
         # Build store metadata for external storage
         ns = start.workflow_namespace or self._client.namespace
-        started_by_workflow = bool(start.workflow_execution.workflow_id)
-        wf_info = (
-            StorageDriverWorkflowInfo(
-                id=start.workflow_execution.workflow_id or None,
-                run_id=start.workflow_execution.run_id or None,
-                type=start.workflow_type or None,
-            )
-            if started_by_workflow
-            else None
-        )
-        act_info = StorageDriverActivityInfo(
-            id=start.activity_id or None,
-            type=start.activity_type or None,
-            run_id=None,
-        )
         # Store metadata is set for the full activity task lifetime (input
         # decode, execution, result/failure encode). Each activity task runs
         # in its own coroutine so the value won't leak to other tasks.
-        with store_metadata_context(
-            StorageDriverStoreMetadata(
-                namespace=ns,
-                current_workflow=wf_info,
-                current_activity=act_info,
+        started_by_workflow = bool(start.workflow_execution.workflow_id)
+        store_target: StorageDriverWorkflowInfo | StorageDriverActivityInfo
+        if started_by_workflow:
+            store_target = StorageDriverWorkflowInfo(
+                id=start.workflow_execution.workflow_id or None,
+                type=start.workflow_type or None,
+                run_id=start.workflow_execution.run_id or None,
             )
+        else:
+            store_target = StorageDriverActivityInfo(
+                id=start.activity_id or None,
+                type=start.activity_type or None,
+            )
+        with store_metadata_context(
+            StorageDriverStoreMetadata(namespace=ns, target=store_target)
         ):
             try:
                 result = await self._execute_activity(

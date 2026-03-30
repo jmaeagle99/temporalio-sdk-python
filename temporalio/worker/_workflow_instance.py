@@ -58,7 +58,7 @@ import temporalio.common
 import temporalio.converter
 import temporalio.exceptions
 import temporalio.workflow
-from temporalio.converter import StorageDriverActivityInfo, StorageDriverWorkflowInfo
+from temporalio.converter import StorageDriverWorkflowInfo
 from temporalio.converter._extstore import StorageDriverStoreMetadata
 from temporalio.service import __version__
 
@@ -2252,27 +2252,12 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
         if command_info is None:
             return StorageDriverStoreMetadata(
                 namespace=ns,
-                current_workflow=current_wf,
+                target=current_wf,
             )
 
         COMMAND_TYPE = temporalio.api.enums.v1.command_type_pb2.CommandType
 
         if (
-            command_info.command_type
-            == COMMAND_TYPE.COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK
-            and command_info.command_seq in self._pending_activities
-        ):
-            handle = self._pending_activities[command_info.command_seq]
-            return StorageDriverStoreMetadata(
-                namespace=ns,
-                current_workflow=current_wf,
-                target_activity=StorageDriverActivityInfo(
-                    id=handle._input.activity_id,
-                    type=handle._input.activity,
-                ),
-            )
-
-        elif (
             command_info.command_type
             == COMMAND_TYPE.COMMAND_TYPE_START_CHILD_WORKFLOW_EXECUTION
             and command_info.command_seq in self._pending_child_workflows
@@ -2280,8 +2265,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             child = self._pending_child_workflows[command_info.command_seq]
             return StorageDriverStoreMetadata(
                 namespace=ns,
-                current_workflow=current_wf,
-                target_workflow=StorageDriverWorkflowInfo(
+                target=StorageDriverWorkflowInfo(
                     id=child._input.id, type=child._input.workflow
                 ),
             )
@@ -2294,14 +2278,13 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             _, target_id = self._pending_external_signals[command_info.command_seq]
             return StorageDriverStoreMetadata(
                 namespace=ns,
-                current_workflow=current_wf,
-                target_workflow=StorageDriverWorkflowInfo(id=target_id),
+                target=StorageDriverWorkflowInfo(id=target_id),
             )
 
         else:
             return StorageDriverStoreMetadata(
                 namespace=ns,
-                current_workflow=current_wf,
+                target=current_wf,
             )
 
     def _instantiate_workflow_object(self) -> Any:

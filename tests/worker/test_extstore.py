@@ -21,9 +21,11 @@ from temporalio.common import RetryPolicy
 from temporalio.converter import (
     ExternalStorage,
     StorageDriver,
+    StorageDriverActivityInfo,
     StorageDriverClaim,
     StorageDriverRetrieveContext,
     StorageDriverStoreContext,
+    StorageDriverWorkflowInfo,
     StorageWarning,
 )
 from temporalio.exceptions import ActivityError, ApplicationError
@@ -972,20 +974,17 @@ async def test_store_metadata_start_workflow(env: WorkflowEnvironment) -> None:
 
     client_ctx = driver.store_contexts[0]
     assert client_ctx.namespace == client.namespace
-    assert client_ctx.current_workflow is None
-    assert client_ctx.target_workflow is not None
-    assert client_ctx.target_workflow.id == workflow_id
-    assert client_ctx.target_workflow.type == "EchoWorkflow"
-    assert client_ctx.target_workflow.run_id is None
-    assert client_ctx.target_activity is None
+    assert isinstance(client_ctx.target, StorageDriverWorkflowInfo)
+    assert client_ctx.target.id == workflow_id
+    assert client_ctx.target.type == "EchoWorkflow"
+    assert client_ctx.target.run_id is None
 
     worker_ctx = driver.store_contexts[1]
     assert worker_ctx.namespace == client.namespace
-    assert worker_ctx.current_workflow is not None
-    assert worker_ctx.current_workflow.id == workflow_id
-    assert worker_ctx.current_workflow.type == "EchoWorkflow"
-    assert worker_ctx.current_workflow.run_id is not None
-    assert worker_ctx.target_workflow is None
+    assert isinstance(worker_ctx.target, StorageDriverWorkflowInfo)
+    assert worker_ctx.target.id == workflow_id
+    assert worker_ctx.target.type == "EchoWorkflow"
+    assert worker_ctx.target.run_id is not None
 
 
 async def test_store_metadata_signal_with_start(env: WorkflowEnvironment) -> None:
@@ -1008,25 +1007,24 @@ async def test_store_metadata_signal_with_start(env: WorkflowEnvironment) -> Non
 
     # [0] Workflow input arg
     input_ctx = driver.store_contexts[0]
-    assert input_ctx.current_workflow is None
-    assert input_ctx.target_workflow is not None
-    assert input_ctx.target_workflow.id == workflow_id
-    assert input_ctx.target_workflow.type == "SignalWaitWorkflow"
-    assert input_ctx.target_workflow.run_id is None
+    assert isinstance(input_ctx.target, StorageDriverWorkflowInfo)
+    assert input_ctx.target.id == workflow_id
+    assert input_ctx.target.type == "SignalWaitWorkflow"
+    assert input_ctx.target.run_id is None
 
     # [1] Signal arg
     signal_ctx = driver.store_contexts[1]
-    assert signal_ctx.current_workflow is None
-    assert signal_ctx.target_workflow is not None
-    assert signal_ctx.target_workflow.id == workflow_id
-    assert signal_ctx.target_workflow.type == "SignalWaitWorkflow"
-    assert signal_ctx.target_workflow.run_id is None
+    assert isinstance(signal_ctx.target, StorageDriverWorkflowInfo)
+    assert signal_ctx.target.id == workflow_id
+    assert signal_ctx.target.type == "SignalWaitWorkflow"
+    assert signal_ctx.target.run_id is None
 
     # [2] Workflow result
     result_ctx = driver.store_contexts[2]
-    assert result_ctx.current_workflow is not None
-    assert result_ctx.current_workflow.run_id is not None
-    assert result_ctx.target_workflow is None
+    assert isinstance(result_ctx.target, StorageDriverWorkflowInfo)
+    assert result_ctx.target.id == workflow_id
+    assert result_ctx.target.type == "SignalWaitWorkflow"
+    assert result_ctx.target.run_id is not None
 
 
 async def test_store_metadata_signal_workflow(env: WorkflowEnvironment) -> None:
@@ -1048,10 +1046,10 @@ async def test_store_metadata_signal_workflow(env: WorkflowEnvironment) -> None:
     assert len(driver.store_contexts) == 3
 
     signal_ctx = driver.store_contexts[1]
-    assert signal_ctx.current_workflow is None
-    assert signal_ctx.target_workflow is not None
-    assert signal_ctx.target_workflow.id == workflow_id
-    assert signal_ctx.target_workflow.type is None
+    assert isinstance(signal_ctx.target, StorageDriverWorkflowInfo)
+    assert signal_ctx.target.id == workflow_id
+    assert signal_ctx.target.type is None
+    assert signal_ctx.target.run_id is None
 
 
 async def test_store_metadata_schedule_action(env: WorkflowEnvironment) -> None:
@@ -1077,11 +1075,10 @@ async def test_store_metadata_schedule_action(env: WorkflowEnvironment) -> None:
         assert len(driver.store_contexts) == 1
         ctx = driver.store_contexts[0]
         assert ctx.namespace == client.namespace
-        assert ctx.current_workflow is None
-        assert ctx.target_workflow is not None
-        assert ctx.target_workflow.id == f"wf-{schedule_id}"
-        assert ctx.target_workflow.type == "EchoWorkflow"
-        assert ctx.target_activity is None
+        assert isinstance(ctx.target, StorageDriverWorkflowInfo)
+        assert ctx.target.id == f"wf-{schedule_id}"
+        assert ctx.target.type == "EchoWorkflow"
+        assert ctx.target.run_id is None
     finally:
         try:
             handle = client.get_schedule_handle(schedule_id)
@@ -1091,7 +1088,7 @@ async def test_store_metadata_schedule_action(env: WorkflowEnvironment) -> None:
 
 
 async def test_store_metadata_child_workflow(env: WorkflowEnvironment) -> None:
-    """External storage should receive the parent as workflow and child as target_workflow."""
+    """External storage should receive the child workflow as the target when scheduling."""
     client, driver = await _make_tracking_client(env)
     workflow_id = f"workflow-{uuid.uuid4()}"
     child_workflow_id = f"{workflow_id}-child"
@@ -1112,43 +1109,31 @@ async def test_store_metadata_child_workflow(env: WorkflowEnvironment) -> None:
 
     # [0] Client starts parent workflow
     client_ctx = driver.store_contexts[0]
-    assert client_ctx.current_workflow is None
-    assert client_ctx.target_workflow is not None
-    assert client_ctx.target_workflow.id == workflow_id
-    assert client_ctx.target_workflow.type == "ChildWorkflowStoreMetadataTestWorkflow"
+    assert isinstance(client_ctx.target, StorageDriverWorkflowInfo)
+    assert client_ctx.target.id == workflow_id
+    assert client_ctx.target.type == "ChildWorkflowStoreMetadataTestWorkflow"
+    assert client_ctx.target.run_id is None
 
-    # [1] Parent schedules child: current_workflow = parent, target_workflow = child
+    # [1] Parent schedules child: target = child workflow
     start_child_ctx = driver.store_contexts[1]
-    assert start_child_ctx.current_workflow is not None
-    assert start_child_ctx.current_workflow.id == workflow_id
-    assert (
-        start_child_ctx.current_workflow.type
-        == "ChildWorkflowStoreMetadataTestWorkflow"
-    )
-    assert start_child_ctx.current_workflow.run_id is not None
-    assert start_child_ctx.target_workflow is not None
-    assert start_child_ctx.target_workflow.id == child_workflow_id
-    assert start_child_ctx.target_workflow.type == "EchoWorkflow"
-    assert start_child_ctx.target_workflow.run_id is None
+    assert isinstance(start_child_ctx.target, StorageDriverWorkflowInfo)
+    assert start_child_ctx.target.id == child_workflow_id
+    assert start_child_ctx.target.type == "EchoWorkflow"
+    assert start_child_ctx.target.run_id is None
 
-    # [2] Child returns result: current_workflow = child, no target
+    # [2] Child returns result: target = child (current execution)
     child_result_ctx = driver.store_contexts[2]
-    assert child_result_ctx.current_workflow is not None
-    assert child_result_ctx.current_workflow.id == child_workflow_id
-    assert child_result_ctx.current_workflow.type == "EchoWorkflow"
-    assert child_result_ctx.current_workflow.run_id is not None
-    assert child_result_ctx.target_workflow is None
+    assert isinstance(child_result_ctx.target, StorageDriverWorkflowInfo)
+    assert child_result_ctx.target.id == child_workflow_id
+    assert child_result_ctx.target.type == "EchoWorkflow"
+    assert child_result_ctx.target.run_id is not None
 
-    # [3] Parent returns result: current_workflow = parent, no target
+    # [3] Parent returns result: target = parent (current execution)
     parent_result_ctx = driver.store_contexts[3]
-    assert parent_result_ctx.current_workflow is not None
-    assert parent_result_ctx.current_workflow.id == workflow_id
-    assert (
-        parent_result_ctx.current_workflow.type
-        == "ChildWorkflowStoreMetadataTestWorkflow"
-    )
-    assert parent_result_ctx.current_workflow.run_id is not None
-    assert parent_result_ctx.target_workflow is None
+    assert isinstance(parent_result_ctx.target, StorageDriverWorkflowInfo)
+    assert parent_result_ctx.target.id == workflow_id
+    assert parent_result_ctx.target.type == "ChildWorkflowStoreMetadataTestWorkflow"
+    assert parent_result_ctx.target.run_id is not None
 
 
 # Workflow definitions for gap tests
@@ -1206,36 +1191,33 @@ async def test_store_metadata_activity_scheduling(env: WorkflowEnvironment) -> N
 
     # [0] Client starts workflow
     client_ctx = driver.store_contexts[0]
-    assert client_ctx.current_workflow is None
-    assert client_ctx.target_workflow is not None
-    assert client_ctx.target_workflow.id == workflow_id
-    assert client_ctx.target_workflow.type == "ActivityScheduleMetadataWorkflow"
+    assert isinstance(client_ctx.target, StorageDriverWorkflowInfo)
+    assert client_ctx.target.id == workflow_id
+    assert client_ctx.target.type == "ActivityScheduleMetadataWorkflow"
+    assert client_ctx.target.run_id is None
 
-    # [1] Workflow worker schedules activity: current_workflow + target_activity
+    # [1] Workflow worker schedules activity: target = activity
     schedule_ctx = driver.store_contexts[1]
     assert schedule_ctx.namespace == client.namespace
-    assert schedule_ctx.current_workflow is not None
-    assert schedule_ctx.current_workflow.id == workflow_id
-    assert schedule_ctx.current_workflow.type == "ActivityScheduleMetadataWorkflow"
-    assert schedule_ctx.target_activity is not None
-    assert schedule_ctx.target_activity.id == "my-activity-id"
-    assert schedule_ctx.target_activity.type == "echo_activity"
+    assert isinstance(schedule_ctx.target, StorageDriverActivityInfo)
+    assert schedule_ctx.target.id == "my-activity-id"
+    assert schedule_ctx.target.type == "echo_activity"
+    assert schedule_ctx.target.run_id is None
 
-    # [2] Activity worker completes: current_workflow + current_activity
+    # [2] Activity worker completes: target = activity
     execute_ctx = driver.store_contexts[2]
     assert execute_ctx.namespace == client.namespace
-    assert execute_ctx.current_workflow is not None
-    assert execute_ctx.current_workflow.id == workflow_id
-    assert execute_ctx.current_workflow.type == "ActivityScheduleMetadataWorkflow"
-    assert execute_ctx.current_activity is not None
-    assert execute_ctx.current_activity.id == "my-activity-id"
-    assert execute_ctx.current_activity.type == "echo_activity"
+    assert isinstance(execute_ctx.target, StorageDriverActivityInfo)
+    assert execute_ctx.target.id == "my-activity-id"
+    assert execute_ctx.target.type == "echo_activity"
+    assert execute_ctx.target.run_id is None
 
-    # [3] Workflow returns result
+    # [3] Workflow returns result: target = workflow (current execution)
     result_ctx = driver.store_contexts[3]
-    assert result_ctx.current_workflow is not None
-    assert result_ctx.current_workflow.id == workflow_id
-    assert result_ctx.target_activity is None
+    assert isinstance(result_ctx.target, StorageDriverWorkflowInfo)
+    assert result_ctx.target.id == workflow_id
+    assert result_ctx.target.type == "ActivityScheduleMetadataWorkflow"
+    assert result_ctx.target.run_id is not None
 
 
 async def test_store_metadata_signal_external_workflow(
@@ -1271,44 +1253,44 @@ async def test_store_metadata_signal_external_workflow(
 
     # [0] Client starts target workflow (SignalWaitWorkflow)
     target_start_ctx = driver.store_contexts[0]
-    assert target_start_ctx.current_workflow is None
-    assert target_start_ctx.target_workflow is not None
-    assert target_start_ctx.target_workflow.id == target_workflow_id
-    assert target_start_ctx.target_workflow.type == "SignalWaitWorkflow"
+    assert isinstance(target_start_ctx.target, StorageDriverWorkflowInfo)
+    assert target_start_ctx.target.id == target_workflow_id
+    assert target_start_ctx.target.type == "SignalWaitWorkflow"
+    assert target_start_ctx.target.run_id is None
 
     # [1] Client starts sender workflow (SignalExternalMetadataWorkflow)
     sender_start_ctx = driver.store_contexts[1]
-    assert sender_start_ctx.current_workflow is None
-    assert sender_start_ctx.target_workflow is not None
-    assert sender_start_ctx.target_workflow.id == sender_workflow_id
-    assert sender_start_ctx.target_workflow.type == "SignalExternalMetadataWorkflow"
+    assert isinstance(sender_start_ctx.target, StorageDriverWorkflowInfo)
+    assert sender_start_ctx.target.id == sender_workflow_id
+    assert sender_start_ctx.target.type == "SignalExternalMetadataWorkflow"
+    assert sender_start_ctx.target.run_id is None
 
-    # [2] Sender signals target: current_workflow = sender, target_workflow = target
+    # [2] Sender signals target: target = the workflow being signaled
     signal_ctx = driver.store_contexts[2]
-    assert signal_ctx.current_workflow is not None
-    assert signal_ctx.current_workflow.id == sender_workflow_id
-    assert signal_ctx.target_workflow is not None
-    assert signal_ctx.target_workflow.id == target_workflow_id
-    assert signal_ctx.target_workflow.type is None
-    assert signal_ctx.target_workflow.run_id is None
+    assert isinstance(signal_ctx.target, StorageDriverWorkflowInfo)
+    assert signal_ctx.target.id == target_workflow_id
+    assert signal_ctx.target.type is None
+    assert signal_ctx.target.run_id is None
 
     # [3] and [4] are the sender and target workflow completions in some order.
     # The sender's WFT 2 (after signal resolution) and the target's WFT (after
     # receiving the signal) are both scheduled by the server at nearly the same
     # time, so the order of their completions is non-deterministic.
     completion_ctxs = {
-        ctx.current_workflow.id: ctx
+        ctx.target.id: ctx
         for ctx in driver.store_contexts[3:5]
-        if ctx.current_workflow is not None
+        if isinstance(ctx.target, StorageDriverWorkflowInfo) and ctx.target.id
     }
     assert sender_workflow_id in completion_ctxs
     assert target_workflow_id in completion_ctxs
 
     sender_result_ctx = completion_ctxs[sender_workflow_id]
-    assert sender_result_ctx.target_workflow is None
+    assert isinstance(sender_result_ctx.target, StorageDriverWorkflowInfo)
+    assert sender_result_ctx.target.run_id is not None
 
     target_result_ctx = completion_ctxs[target_workflow_id]
-    assert target_result_ctx.target_workflow is None
+    assert isinstance(target_result_ctx.target, StorageDriverWorkflowInfo)
+    assert target_result_ctx.target.run_id is not None
 
 
 async def test_store_metadata_activity_worker(env: WorkflowEnvironment) -> None:
@@ -1330,13 +1312,12 @@ async def test_store_metadata_activity_worker(env: WorkflowEnvironment) -> None:
 
     assert len(driver.store_contexts) == 4
 
-    # [2] Activity worker completes: current_workflow has run_id, current_activity set
+    # [2] Activity worker completes: target = activity
     execute_ctx = driver.store_contexts[2]
-    assert execute_ctx.current_workflow is not None
-    assert execute_ctx.current_workflow.id == workflow_id
-    assert execute_ctx.current_workflow.run_id is not None
-    assert execute_ctx.current_activity is not None
-    assert execute_ctx.current_activity.type == "echo_activity"
+    assert isinstance(execute_ctx.target, StorageDriverActivityInfo)
+    assert execute_ctx.target.id == "my-activity-id"
+    assert execute_ctx.target.type == "echo_activity"
+    assert execute_ctx.target.run_id is None
 
 
 async def test_store_metadata_decode_activation(env: WorkflowEnvironment) -> None:
@@ -1357,15 +1338,15 @@ async def test_store_metadata_decode_activation(env: WorkflowEnvironment) -> Non
     # [0] Client starts workflow
     client_ctx = driver.store_contexts[0]
     assert client_ctx.namespace == client.namespace
-    assert client_ctx.current_workflow is None
-    assert client_ctx.target_workflow is not None
-    assert client_ctx.target_workflow.id == workflow_id
-    assert client_ctx.target_workflow.type == "EchoWorkflow"
+    assert isinstance(client_ctx.target, StorageDriverWorkflowInfo)
+    assert client_ctx.target.id == workflow_id
+    assert client_ctx.target.type == "EchoWorkflow"
+    assert client_ctx.target.run_id is None
 
     # [1] Workflow returns result
     worker_ctx = driver.store_contexts[1]
     assert worker_ctx.namespace == client.namespace
-    assert worker_ctx.current_workflow is not None
-    assert worker_ctx.current_workflow.id == workflow_id
-    assert worker_ctx.current_workflow.type == "EchoWorkflow"
-    assert worker_ctx.target_workflow is None
+    assert isinstance(worker_ctx.target, StorageDriverWorkflowInfo)
+    assert worker_ctx.target.id == workflow_id
+    assert worker_ctx.target.type == "EchoWorkflow"
+    assert worker_ctx.target.run_id is not None
