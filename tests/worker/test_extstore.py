@@ -1292,16 +1292,22 @@ async def test_store_metadata_signal_external_workflow(
     assert signal_ctx.target_workflow.type is None
     assert signal_ctx.target_workflow.run_id is None
 
-    # [3] Sender workflow returns
-    sender_result_ctx = driver.store_contexts[3]
-    assert sender_result_ctx.current_workflow is not None
-    assert sender_result_ctx.current_workflow.id == sender_workflow_id
+    # [3] and [4] are the sender and target workflow completions in some order.
+    # The sender's WFT 2 (after signal resolution) and the target's WFT (after
+    # receiving the signal) are both scheduled by the server at nearly the same
+    # time, so the order of their completions is non-deterministic.
+    completion_ctxs = {
+        ctx.current_workflow.id: ctx
+        for ctx in driver.store_contexts[3:5]
+        if ctx.current_workflow is not None
+    }
+    assert sender_workflow_id in completion_ctxs
+    assert target_workflow_id in completion_ctxs
+
+    sender_result_ctx = completion_ctxs[sender_workflow_id]
     assert sender_result_ctx.target_workflow is None
 
-    # [4] Target workflow returns signal data
-    target_result_ctx = driver.store_contexts[4]
-    assert target_result_ctx.current_workflow is not None
-    assert target_result_ctx.current_workflow.id == target_workflow_id
+    target_result_ctx = completion_ctxs[target_workflow_id]
     assert target_result_ctx.target_workflow is None
 
 
