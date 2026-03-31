@@ -1145,7 +1145,8 @@ async def test_store_metadata_child_workflow(env: WorkflowEnvironment) -> None:
     child_result_ctx = driver.store_contexts[2]
     assert isinstance(child_result_ctx.target, StorageDriverWorkflowInfo)
     assert child_result_ctx.target.id == workflow_id
-    assert child_result_ctx.target.type is None  # ParentInfo does not carry workflow type
+    # ParentInfo does not carry workflow type
+    assert child_result_ctx.target.type is None
     assert child_result_ctx.target.run_id is not None
 
     # [3] Parent returns result: target = parent (current execution)
