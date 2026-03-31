@@ -1342,5 +1342,4 @@ async def test_store_metadata_standalone_activity(env: WorkflowEnvironment) -> N
     assert isinstance(execute_ctx.target, StorageDriverActivityInfo)
     assert execute_ctx.target.id == activity_id
     assert execute_ctx.target.type == "echo_activity"
-    # TODO: Fix after information is provided by sdk-core
-    assert client_ctx.target.run_id is not None
+    assert execute_ctx.target.run_id is None
