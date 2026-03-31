@@ -195,7 +195,9 @@ async def test_s3_driver_standalone_activity_input_key(
 ) -> None:
     activity_id = str(uuid.uuid4())
     task_queue = str(uuid.uuid4())
-    async with new_worker(tmprl_client, activities=[large_io_activity], task_queue=task_queue):
+    async with new_worker(
+        tmprl_client, activities=[large_io_activity], task_queue=task_queue
+    ):
         await tmprl_client.execute_activity(
             large_io_activity,
             LARGE,
@@ -216,7 +218,9 @@ async def test_s3_driver_standalone_activity_output_key(
 ) -> None:
     activity_id = str(uuid.uuid4())
     task_queue = str(uuid.uuid4())
-    async with new_worker(tmprl_client, activities=[large_output_activity], task_queue=task_queue):
+    async with new_worker(
+        tmprl_client, activities=[large_output_activity], task_queue=task_queue
+    ):
         await tmprl_client.execute_activity(
             large_output_activity,
             id=activity_id,
