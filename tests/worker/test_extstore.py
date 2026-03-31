@@ -1071,6 +1071,8 @@ async def test_store_metadata_signal_workflow(env: WorkflowEnvironment) -> None:
 
 async def test_store_metadata_schedule_action(env: WorkflowEnvironment) -> None:
     """Schedule action _to_proto should set workflow metadata."""
+    if env.supports_time_skipping:
+        pytest.skip("Java test server doesn't support schedules")
     client, driver = await _make_tracking_client(env)
     task_queue = str(uuid.uuid4())
     schedule_id = f"sched-{uuid.uuid4()}"
@@ -1316,6 +1318,10 @@ async def test_store_metadata_signal_external_workflow(
 
 async def test_store_metadata_standalone_activity(env: WorkflowEnvironment) -> None:
     """Standalone activity worker should use StorageDriverActivityInfo as target."""
+    if env.supports_time_skipping:
+        pytest.skip(
+            "Java test server: https://github.com/temporalio/sdk-java/issues/2741"
+        )
     client, driver = await _make_tracking_client(env)
     activity_id = f"activity-{uuid.uuid4()}"
 

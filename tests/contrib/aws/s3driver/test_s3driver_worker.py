@@ -191,8 +191,12 @@ async def test_s3_driver_workflow_activity_output_key(
 
 
 async def test_s3_driver_standalone_activity_input_key(
-    tmprl_client: Client, aioboto3_client: S3Client
+    env: WorkflowEnvironment, tmprl_client: Client, aioboto3_client: S3Client
 ) -> None:
+    if env.supports_time_skipping:
+        pytest.skip(
+            "Java test server: https://github.com/temporalio/sdk-java/issues/2741"
+        )
     activity_id = str(uuid.uuid4())
     task_queue = str(uuid.uuid4())
     async with new_worker(
@@ -214,8 +218,12 @@ async def test_s3_driver_standalone_activity_input_key(
 
 
 async def test_s3_driver_standalone_activity_output_key(
-    tmprl_client: Client, aioboto3_client: S3Client
+    env: WorkflowEnvironment, tmprl_client: Client, aioboto3_client: S3Client
 ) -> None:
+    if env.supports_time_skipping:
+        pytest.skip(
+            "Java test server: https://github.com/temporalio/sdk-java/issues/2741"
+        )
     activity_id = str(uuid.uuid4())
     task_queue = str(uuid.uuid4())
     async with new_worker(
