@@ -412,7 +412,8 @@ async def test_s3_driver_parent_child_independent_key_namespaces(
 ) -> None:
     """An order fulfillment workflow spawns a child payment processor and passes
     it a large order payload. Child input is keyed under the parent (it lives in
-    the parent's history); child output is keyed under the child."""
+    the parent's history); child output is keyed under the parent (for lifecycle
+    resilience — the child result lives in the parent's completion history)."""
     workflow_id = str(uuid.uuid4())
     payment_id = f"{workflow_id}-payment"
     async with new_worker(
@@ -428,12 +429,13 @@ async def test_s3_driver_parent_child_independent_key_namespaces(
     keys = await _list_keys(aioboto3_client)
     parent_keys = [k for k in keys if f"/wi/{workflow_id}/" in k]
     child_keys = [k for k in keys if f"/wi/{payment_id}/" in k]
-    # Parent accumulates 2 keys: client start (ri=null, LARGE input) and child
-    # result propagated back to parent as workflow result (ri=run_id, LARGE_2).
-    assert len(parent_keys) == 2
-    # Child accumulates 2 keys: its input from parent (ri=null, LARGE) and its
-    # own result (ri=child_run_id, LARGE_2).
-    assert len(child_keys) == 2
+    # Parent accumulates 3 keys:
+    #   1. Client start stored in parent's key space (ri=null)
+    #   2. Child result stored in parent's key space
+    #   3. Parent's own workflow result
+    assert len(parent_keys) == 3
+    # Child accumulates 1 key: its input from the parent
+    assert len(child_keys) == 1
 
 
 async def test_s3_store_failure_surfaces_in_workflow_history(
