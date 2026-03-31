@@ -2281,6 +2281,19 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
                 target=StorageDriverWorkflowInfo(id=target_id),
             )
 
+        elif (
+            command_info.command_type
+            == COMMAND_TYPE.COMMAND_TYPE_COMPLETE_WORKFLOW_EXECUTION
+            and self._info.parent is not None
+        ):
+            return StorageDriverStoreMetadata(
+                namespace=ns,
+                target=StorageDriverWorkflowInfo(
+                    id=self._info.parent.workflow_id,
+                    run_id=self._info.parent.run_id,
+                ),
+            )
+
         else:
             return StorageDriverStoreMetadata(
                 namespace=ns,
