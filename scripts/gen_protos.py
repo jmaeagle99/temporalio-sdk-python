@@ -46,11 +46,19 @@ py_fixes = [
         re.compile(r"'__module__' : 'temporal\.api\.").sub,
         r"'__module__' : 'temporalio.api.",
     ),
+    partial(
+        re.compile(r"from protoc_gen_openapiv2\.").sub,
+        r"from temporalio.bridge.proto.protoc_gen_openapiv2.",
+    ),
 ]
 
 pyi_fixes = [
     partial(re.compile(r"temporal\.api\.").sub, r"temporalio.api."),
     partial(re.compile(r"temporal\.sdk\.core\.").sub, r"temporalio.bridge.proto."),
+    partial(
+        re.compile(r"protoc_gen_openapiv2\.").sub,
+        r"temporalio.bridge.proto.protoc_gen_openapiv2.",
+    ),
 ]
 
 find_class_re = re.compile(r"\nclass ([^_\(\:]+)")
@@ -165,6 +173,7 @@ def generate_protos(output_dir: Path):
             f"--proto_path={health_proto_dir}",
             f"--proto_path={test_proto_dir}",
             f"--proto_path={additional_proto_dir}",
+            f"--proto_path={proto_dir}",
             f"--python_out={output_dir}",
             f"--grpc_python_out={output_dir}",
             f"--mypy_out={output_dir}",
@@ -192,6 +201,11 @@ def generate_protos(output_dir: Path):
         p.replace(sdk_out_dir / p.name)
     shutil.rmtree(sdk_out_dir / "health", ignore_errors=True)
     (output_dir / "health").replace(sdk_out_dir / "health")
+    shutil.rmtree(sdk_out_dir / "protoc_gen_openapiv2", ignore_errors=True)
+    if (output_dir / "protoc_gen_openapiv2").exists():
+        (output_dir / "protoc_gen_openapiv2").replace(
+            sdk_out_dir / "protoc_gen_openapiv2"
+        )
     # Move test protos
     for v in ["__init__.py", "proto_message_pb2.py", "proto_message_pb2.pyi"]:
         shutil.copy2(

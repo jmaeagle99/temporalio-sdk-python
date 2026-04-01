@@ -478,6 +478,9 @@ BUFFERED_METRIC_KIND_GAUGE = BufferedMetricKind(1)
 BUFFERED_METRIC_KIND_HISTOGRAM = BufferedMetricKind(2)
 """Buffered metric is a histogram."""
 
+BUFFERED_METRIC_KIND_UP_DOWN_COUNTER = BufferedMetricKind(3)
+"""Buffered metric is an up-down counter which means values are signed deltas."""
+
 
 # WARNING: This must match Rust metric::BufferedMetric
 class BufferedMetric(Protocol):
