@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # Set to true to log all activations and completions
 LOG_PROTOS = False
 
-_DEFAULT_WORKFLOW_TASK_EXTERNAL_STORAGE_CONCURRENCY: int = 10
+_DEFAULT_WORKFLOW_TASK_EXTERNAL_STORAGE_CONCURRENCY: int = 3
 
 
 class _WorkflowWorker:  # type:ignore[reportUnusedClass]
