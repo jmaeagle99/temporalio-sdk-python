@@ -234,13 +234,18 @@ class ExternalStorage(WithSerializationContext):
     def __post_init__(self) -> None:
         """Validate drivers and build the internal name-keyed driver map.
 
-        Raises :exc:`ValueError` if no drivers are provided, if more than one
-        driver is registered without a :attr:`driver_selector`, or if any two
-        drivers share the same name.
+        Raises :exc:`ValueError` if no drivers are provided, if
+        :attr:`payload_size_threshold` is zero or less than zero, if more
+        than one driver is registered without a :attr:`driver_selector`, or if
+        any two drivers share the same name.
         """
         if not self.drivers:
             raise ValueError(
                 "ExternalStorage.drivers must contain at least one driver."
+            )
+        if self.payload_size_threshold is not None and self.payload_size_threshold <= 0:
+            raise ValueError(
+                "ExternalStorage.payload_size_threshold must be greater than zero."
             )
         if len(self.drivers) > 1 and self.driver_selector is None:
             raise ValueError(

@@ -678,6 +678,27 @@ class TestMultiDriver:
                 payload_size_threshold=50,
             )
 
+    @pytest.mark.parametrize("threshold", [0, -1, -1000])
+    def test_non_positive_payload_size_threshold_raises(self, threshold: int):
+        """A payload_size_threshold of zero or negative raises ValueError
+        immediately when constructing ExternalStorage."""
+        driver = InMemoryTestDriver()
+
+        with pytest.raises(
+            ValueError,
+            match=r"^ExternalStorage\.payload_size_threshold must be greater than zero\.$",
+        ):
+            ExternalStorage(
+                drivers=[driver],
+                payload_size_threshold=threshold,
+            )
+
+    def test_none_payload_size_threshold_is_allowed(self):
+        """payload_size_threshold=None is valid and should not raise."""
+        driver = InMemoryTestDriver()
+        ext = ExternalStorage(drivers=[driver], payload_size_threshold=None)
+        assert ext.payload_size_threshold is None
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
