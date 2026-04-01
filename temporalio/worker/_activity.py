@@ -271,11 +271,11 @@ class _ActivityWorker:
             data_converter = data_converter.with_context(context)
 
             store_metadata = StorageDriverStoreMetadata(
-                namespace=activity.info.namespace,
                 target=StorageDriverActivityInfo(
                     id=activity.info.activity_id,
                     type=activity.info.activity_type,
                     run_id=activity.info.activity_run_id,
+                    namespace=activity.info.namespace,
                 ),
             )
 
@@ -344,15 +344,15 @@ class _ActivityWorker:
                 id=start.workflow_execution.workflow_id or None,
                 type=start.workflow_type or None,
                 run_id=start.workflow_execution.run_id or None,
+                namespace=ns,
             )
         else:
             store_target = StorageDriverActivityInfo(
                 id=start.activity_id or None,
                 type=start.activity_type or None,
+                namespace=ns,
             )
-        with store_metadata_context(
-            StorageDriverStoreMetadata(namespace=ns, target=store_target)
-        ):
+        with store_metadata_context(StorageDriverStoreMetadata(target=store_target)):
             try:
                 result = await self._execute_activity(
                     start, running_activity, task_token, data_converter

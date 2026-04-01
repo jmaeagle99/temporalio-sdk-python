@@ -117,12 +117,11 @@ class S3StorageDriver(StorageDriver):
         def _quote(val: str | None) -> str | None:
             return urllib.parse.quote(val, safe="") if val else None
 
-        namespace = _quote(context.namespace)
-        namespace_segment = f"/ns/{namespace}" if namespace else ""
-
         # Build context segments from the target identity.
         context_segments = ""
         target = context.target
+        namespace = _quote(target.namespace) if target is not None else None
+        namespace_segment = f"/ns/{namespace}" if namespace else ""
         if isinstance(target, StorageDriverWorkflowInfo):
             wf_type = _quote(target.type) or "null"
             wf_id = _quote(target.id) or "null"

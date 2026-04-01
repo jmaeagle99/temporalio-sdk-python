@@ -974,16 +974,16 @@ async def test_store_metadata_start_workflow(env: WorkflowEnvironment) -> None:
 
     # [0] Workflow input arg
     client_ctx = driver.store_contexts[0]
-    assert client_ctx.namespace == client.namespace
     assert isinstance(client_ctx.target, StorageDriverWorkflowInfo)
+    assert client_ctx.target.namespace == client.namespace
     assert client_ctx.target.id == workflow_id
     assert client_ctx.target.type == "EchoWorkflow"
     assert client_ctx.target.run_id is None
 
     # [1] Workflow result
     worker_ctx = driver.store_contexts[1]
-    assert worker_ctx.namespace == client.namespace
     assert isinstance(worker_ctx.target, StorageDriverWorkflowInfo)
+    assert worker_ctx.target.namespace == client.namespace
     assert worker_ctx.target.id == workflow_id
     assert worker_ctx.target.type == "EchoWorkflow"
     assert worker_ctx.target.run_id is not None
@@ -1095,8 +1095,8 @@ async def test_store_metadata_schedule_action(env: WorkflowEnvironment) -> None:
 
         # [0] Client encodes workflow args when creating the schedule action
         ctx = driver.store_contexts[0]
-        assert ctx.namespace == client.namespace
         assert isinstance(ctx.target, StorageDriverWorkflowInfo)
+        assert ctx.target.namespace == client.namespace
         assert ctx.target.id == f"wf-{schedule_id}"
         assert ctx.target.type == "EchoWorkflow"
         assert ctx.target.run_id is None
@@ -1221,16 +1221,16 @@ async def test_store_metadata_activity_scheduling(env: WorkflowEnvironment) -> N
 
     # [1] Workflow worker schedules activity
     schedule_ctx = driver.store_contexts[1]
-    assert schedule_ctx.namespace == client.namespace
     assert isinstance(schedule_ctx.target, StorageDriverWorkflowInfo)
+    assert schedule_ctx.target.namespace == client.namespace
     assert schedule_ctx.target.id == workflow_id
     assert schedule_ctx.target.type == "ActivityScheduleMetadataWorkflow"
     assert schedule_ctx.target.run_id is not None
 
     # [2] Activity worker completes
     execute_ctx = driver.store_contexts[2]
-    assert execute_ctx.namespace == client.namespace
     assert isinstance(execute_ctx.target, StorageDriverWorkflowInfo)
+    assert execute_ctx.target.namespace == client.namespace
     assert execute_ctx.target.id == workflow_id
     assert execute_ctx.target.type == "ActivityScheduleMetadataWorkflow"
     assert execute_ctx.target.run_id is not None
@@ -1338,16 +1338,16 @@ async def test_store_metadata_standalone_activity(env: WorkflowEnvironment) -> N
 
     client_ctx = driver.store_contexts[0]
     # [0] Client schedules standalone activity
-    assert client_ctx.namespace == client.namespace
     assert isinstance(client_ctx.target, StorageDriverActivityInfo)
+    assert client_ctx.target.namespace == client.namespace
     assert client_ctx.target.id == activity_id
     assert client_ctx.target.type == "echo_activity"
     assert client_ctx.target.run_id is None
 
     # [1] Activity worker completes: target = activity (no parent workflow)
     execute_ctx = driver.store_contexts[1]
-    assert execute_ctx.namespace == client.namespace
     assert isinstance(execute_ctx.target, StorageDriverActivityInfo)
+    assert execute_ctx.target.namespace == client.namespace
     assert execute_ctx.target.id == activity_id
     assert execute_ctx.target.type == "echo_activity"
     assert execute_ctx.target.run_id is None

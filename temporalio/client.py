@@ -6169,8 +6169,9 @@ class ScheduleActionStartWorkflow(ScheduleAction):
             priority = self.priority._to_proto()
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=client.namespace,
-                target=StorageDriverWorkflowInfo(id=self.id, type=self.workflow),
+                target=StorageDriverWorkflowInfo(
+                    id=self.id, type=self.workflow, namespace=client.namespace
+                ),
             )
         ):
             data_converter = client.data_converter.with_context(
@@ -8096,8 +8097,9 @@ class _ClientImpl(OutboundInterceptor):
         assert input.start_signal
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
-                target=StorageDriverWorkflowInfo(id=input.id, type=input.workflow),
+                target=StorageDriverWorkflowInfo(
+                    id=input.id, type=input.workflow, namespace=self._client.namespace
+                ),
             )
         ):
             data_converter = self._client.data_converter.with_context(
@@ -8133,8 +8135,9 @@ class _ClientImpl(OutboundInterceptor):
     ) -> None:
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
-                target=StorageDriverWorkflowInfo(id=input.id, type=input.workflow),
+                target=StorageDriverWorkflowInfo(
+                    id=input.id, type=input.workflow, namespace=self._client.namespace
+                ),
             )
         ):
             data_converter = self._client.data_converter.with_context(
@@ -8259,9 +8262,10 @@ class _ClientImpl(OutboundInterceptor):
     async def query_workflow(self, input: QueryWorkflowInput) -> Any:
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
                 target=StorageDriverWorkflowInfo(
-                    id=input.id, run_id=input.run_id or None
+                    id=input.id,
+                    run_id=input.run_id or None,
+                    namespace=self._client.namespace,
                 ),
             )
         ):
@@ -8325,9 +8329,10 @@ class _ClientImpl(OutboundInterceptor):
     async def signal_workflow(self, input: SignalWorkflowInput) -> None:
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
                 target=StorageDriverWorkflowInfo(
-                    id=input.id, run_id=input.run_id or None
+                    id=input.id,
+                    run_id=input.run_id or None,
+                    namespace=self._client.namespace,
                 ),
             )
         ):
@@ -8358,9 +8363,10 @@ class _ClientImpl(OutboundInterceptor):
     async def terminate_workflow(self, input: TerminateWorkflowInput) -> None:
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
                 target=StorageDriverWorkflowInfo(
-                    id=input.id, run_id=input.run_id or None
+                    id=input.id,
+                    run_id=input.run_id or None,
+                    namespace=self._client.namespace,
                 ),
             )
         ):
@@ -8425,8 +8431,11 @@ class _ClientImpl(OutboundInterceptor):
         """Build StartActivityExecutionRequest from input."""
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
-                target=StorageDriverActivityInfo(id=input.id, type=input.activity_type),
+                target=StorageDriverActivityInfo(
+                    id=input.id,
+                    type=input.activity_type,
+                    namespace=self._client.namespace,
+                ),
             )
         ):
             data_converter = self._client.data_converter.with_context(
@@ -8630,12 +8639,12 @@ class _ClientImpl(OutboundInterceptor):
     ) -> temporalio.api.workflowservice.v1.UpdateWorkflowExecutionRequest:
         with store_metadata_context(
             StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
                 target=StorageDriverWorkflowInfo(
                     id=workflow_id,
                     run_id=(input.run_id or None)
                     if isinstance(input, StartWorkflowUpdateInput)
                     else None,
+                    namespace=self._client.namespace,
                 ),
             )
         ):
@@ -8826,23 +8835,21 @@ class _ClientImpl(OutboundInterceptor):
         if isinstance(id_or_token, AsyncActivityIDReference):
             if id_or_token.workflow_id:
                 return StorageDriverStoreMetadata(
-                    namespace=self._client.namespace,
                     target=StorageDriverWorkflowInfo(
                         id=id_or_token.workflow_id or None,
                         run_id=id_or_token.run_id or None,
+                        namespace=self._client.namespace,
                     ),
                 )
             return StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
                 target=StorageDriverActivityInfo(
                     id=id_or_token.activity_id,
                     run_id=id_or_token.run_id or None,
+                    namespace=self._client.namespace,
                 ),
             )
         else:
-            return StorageDriverStoreMetadata(
-                namespace=self._client.namespace,
-            )
+            return StorageDriverStoreMetadata()
 
     async def heartbeat_async_activity(
         self, input: HeartbeatAsyncActivityInput
@@ -9065,35 +9072,27 @@ class _ClientImpl(OutboundInterceptor):
                 else None,
             )
         try:
-            # Set namespace-level store metadata as a baseline for schedule
-            # encoding. The schedule action's _to_proto will override with
-            # workflow-specific metadata for its own encoding.
-            with store_metadata_context(
-                StorageDriverStoreMetadata(
-                    namespace=self._client.namespace,
+            request = temporalio.api.workflowservice.v1.CreateScheduleRequest(
+                namespace=self._client.namespace,
+                schedule_id=input.id,
+                schedule=await input.schedule._to_proto(self._client),
+                initial_patch=initial_patch,
+                identity=self._client.identity,
+                request_id=str(uuid.uuid4()),
+                memo=await self._client.data_converter._encode_memo(input.memo)
+                if input.memo
+                else None,
+            )
+            if input.search_attributes:
+                temporalio.converter.encode_search_attributes(
+                    input.search_attributes, request.search_attributes
                 )
-            ):
-                request = temporalio.api.workflowservice.v1.CreateScheduleRequest(
-                    namespace=self._client.namespace,
-                    schedule_id=input.id,
-                    schedule=await input.schedule._to_proto(self._client),
-                    initial_patch=initial_patch,
-                    identity=self._client.identity,
-                    request_id=str(uuid.uuid4()),
-                    memo=await self._client.data_converter._encode_memo(input.memo)
-                    if input.memo
-                    else None,
-                )
-                if input.search_attributes:
-                    temporalio.converter.encode_search_attributes(
-                        input.search_attributes, request.search_attributes
-                    )
-                await self._client.workflow_service.create_schedule(
-                    request,
-                    retry=True,
-                    metadata=input.rpc_metadata,
-                    timeout=input.rpc_timeout,
-                )
+            await self._client.workflow_service.create_schedule(
+                request,
+                retry=True,
+                metadata=input.rpc_metadata,
+                timeout=input.rpc_timeout,
+            )
         except RPCError as err:
             already_started = (
                 err.status == RPCStatusCode.ALREADY_EXISTS

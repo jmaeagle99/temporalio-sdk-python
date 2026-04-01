@@ -305,7 +305,6 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
             # Set default store metadata for decode_activation
             with store_metadata_context(
                 StorageDriverStoreMetadata(
-                    namespace=self._namespace,
                     target=StorageDriverWorkflowInfo(
                         id=workflow_id,
                         run_id=act.run_id,
@@ -314,6 +313,7 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                             if workflow
                             else (init_job.workflow_type if init_job else None)
                         ),
+                        namespace=self._namespace,
                     ),
                 )
             ):

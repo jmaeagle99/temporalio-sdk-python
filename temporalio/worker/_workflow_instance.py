@@ -2247,13 +2247,11 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             id=self._info.workflow_id,
             run_id=self._info.run_id,
             type=self._info.workflow_type,
+            namespace=ns,
         )
 
         if command_info is None:
-            return StorageDriverStoreMetadata(
-                namespace=ns,
-                target=current_wf,
-            )
+            return StorageDriverStoreMetadata(target=current_wf)
 
         COMMAND_TYPE = temporalio.api.enums.v1.command_type_pb2.CommandType
 
@@ -2264,9 +2262,8 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
         ):
             child = self._pending_child_workflows[command_info.command_seq]
             return StorageDriverStoreMetadata(
-                namespace=ns,
                 target=StorageDriverWorkflowInfo(
-                    id=child._input.id, type=child._input.workflow
+                    id=child._input.id, type=child._input.workflow, namespace=ns
                 ),
             )
 
@@ -2277,8 +2274,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
         ):
             _, target_id = self._pending_external_signals[command_info.command_seq]
             return StorageDriverStoreMetadata(
-                namespace=ns,
-                target=StorageDriverWorkflowInfo(id=target_id),
+                target=StorageDriverWorkflowInfo(id=target_id, namespace=ns),
             )
 
         elif (
@@ -2287,18 +2283,15 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             and self._info.parent is not None
         ):
             return StorageDriverStoreMetadata(
-                namespace=ns,
                 target=StorageDriverWorkflowInfo(
                     id=self._info.parent.workflow_id,
                     run_id=self._info.parent.run_id,
+                    namespace=ns,
                 ),
             )
 
         else:
-            return StorageDriverStoreMetadata(
-                namespace=ns,
-                target=current_wf,
-            )
+            return StorageDriverStoreMetadata(target=current_wf)
 
     def _instantiate_workflow_object(self) -> Any:
         if not self._workflow_input:

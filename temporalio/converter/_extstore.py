@@ -88,13 +88,16 @@ class StorageDriverClaim:
     """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class StorageDriverWorkflowInfo:
     """Workflow identity information for external storage operations.
 
     .. warning::
         This API is experimental.
     """
+
+    namespace: str
+    """The namespace of the workflow execution."""
 
     id: str | None = None
     """The workflow ID."""
@@ -106,13 +109,16 @@ class StorageDriverWorkflowInfo:
     """The workflow type name, if available."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class StorageDriverActivityInfo:
     """Activity identity information for external storage operations.
 
     .. warning::
         This API is experimental.
     """
+
+    namespace: str
+    """The namespace of the activity execution."""
 
     id: str | None = None
     """The activity ID."""
@@ -124,16 +130,13 @@ class StorageDriverActivityInfo:
     """The activity type name, if available."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class StorageDriverStoreMetadata:
     """Store-only metadata available during external storage operations.
 
     .. warning::
         This API is experimental.
     """
-
-    namespace: str | None = None
-    """The namespace of the current execution context."""
 
     target: StorageDriverActivityInfo | StorageDriverWorkflowInfo | None = None
     """The workflow or activity for which this payload is being stored."""
@@ -170,9 +173,6 @@ class StorageDriverStoreContext:
         This API is experimental.
     """
 
-    namespace: str | None = None
-    """The namespace of the current execution context."""
-
     target: StorageDriverActivityInfo | StorageDriverWorkflowInfo | None = None
     """The workflow or activity for which this payload is being stored.
 
@@ -180,7 +180,11 @@ class StorageDriverStoreContext:
     workflow being started, an activity being scheduled, an external workflow
     being signaled), this is that target's identity.  When no explicit target
     exists the current execution context (workflow or activity) is used as the
-    target instead."""
+    target instead.
+
+    The :attr:`StorageDriverWorkflowInfo.namespace` or
+    :attr:`StorageDriverActivityInfo.namespace` field on the target carries the
+    namespace for the execution, when available."""
 
 
 @dataclass(frozen=True)
@@ -363,7 +367,6 @@ class ExternalStorage:
     def _build_store_context() -> StorageDriverStoreContext:
         meta = _current_store_metadata.get()
         return StorageDriverStoreContext(
-            namespace=meta.namespace if meta else None,
             target=meta.target if meta else None,
         )
 

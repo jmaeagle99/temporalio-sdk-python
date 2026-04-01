@@ -51,11 +51,9 @@ def make_payload(value: str = "hello") -> Payload:
 
 
 def make_store_context(
-    namespace: str | None = None,
     target: StorageDriverActivityInfo | StorageDriverWorkflowInfo | None = None,
 ) -> StorageDriverStoreContext:
     return StorageDriverStoreContext(
-        namespace=namespace,
         target=target,
     )
 
@@ -67,9 +65,8 @@ def make_workflow_context(
     run_id: str | None = None,
 ) -> StorageDriverStoreContext:
     return make_store_context(
-        namespace=namespace,
         target=StorageDriverWorkflowInfo(
-            id=workflow_id, type=workflow_type, run_id=run_id
+            id=workflow_id, type=workflow_type, run_id=run_id, namespace=namespace
         ),
     )
 
@@ -81,9 +78,8 @@ def make_activity_context(
     run_id: str | None = None,
 ) -> StorageDriverStoreContext:
     return make_store_context(
-        namespace=namespace,
         target=StorageDriverActivityInfo(
-            id=activity_id, type=activity_type, run_id=run_id
+            id=activity_id, type=activity_type, run_id=run_id, namespace=namespace
         ),
     )
 
