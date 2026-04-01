@@ -94,5 +94,5 @@ class InSandbox:
         self,
         command_info: _command_aware_visitor.CommandInfo | None,
     ) -> StorageDriverStoreContext:
-        """Get store metadata for external storage."""
+        """Get store context for external storage."""
         return self.instance.get_external_store_context(command_info)

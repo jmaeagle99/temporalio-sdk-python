@@ -145,11 +145,7 @@ class StorageDriverStoreContext:
     workflow being started, an activity being scheduled, an external workflow
     being signaled), this is that target's identity.  When no explicit target
     exists the current execution context (workflow or activity) is used as the
-    target instead.
-
-    The :attr:`StorageDriverWorkflowInfo.namespace` or
-    :attr:`StorageDriverActivityInfo.namespace` field on the target carries the
-    namespace for the execution, when available."""
+    target instead."""
 
 
 @dataclass(frozen=True)

@@ -958,7 +958,7 @@ async def _make_tracking_client(
 
 
 async def test_store_metadata_start_workflow(env: WorkflowEnvironment) -> None:
-    """start_workflow should set workflow id and type on store metadata."""
+    """start_workflow should set workflow id and type on store context."""
     client, driver = await _make_tracking_client(env)
     workflow_id = str(uuid.uuid4())
 
@@ -1030,7 +1030,7 @@ async def test_store_metadata_signal_with_start(env: WorkflowEnvironment) -> Non
 
 
 async def test_store_metadata_signal_workflow(env: WorkflowEnvironment) -> None:
-    """signal_workflow should set workflow id on store metadata."""
+    """signal_workflow should set workflow id on store context."""
     client, driver = await _make_tracking_client(env)
     workflow_id = str(uuid.uuid4())
 

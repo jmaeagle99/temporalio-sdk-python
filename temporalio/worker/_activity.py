@@ -331,9 +331,9 @@ class _ActivityWorker:
         )
         data_converter = self._data_converter.with_context(context)
 
-        # Build store metadata for external storage
+        # Build store context for external storage
         ns = start.workflow_namespace or self._client.namespace
-        # Store metadata is set for the full activity task lifetime (input
+        # Store context is set for the full activity task lifetime (input
         # decode, execution, result/failure encode). Each activity task runs
         # in its own coroutine so the value won't leak to other tasks.
         started_by_workflow = bool(start.workflow_execution.workflow_id)
