@@ -533,8 +533,11 @@ def feature_flag_is_on(workflow_id: str | None) -> bool:
 def feature_flag_selector(
     context: temporalio.converter.StorageDriverStoreContext, _payload: Payload
 ) -> temporalio.converter.StorageDriver | None:
-    wf = context.current_workflow or context.target_workflow
-    workflow_id = wf.id if wf else None
+    workflow_id = (
+        context.target.id
+        if isinstance(context.target, temporalio.converter.StorageDriverWorkflowInfo)
+        else None
+    )
     return my_driver if feature_flag_is_on(workflow_id) else None
 
 options = ExternalStorage(
