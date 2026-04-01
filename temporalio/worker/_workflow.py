@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import contextlib
 import dataclasses
 import logging
 import os
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta, timezone
 from types import TracebackType
@@ -29,11 +28,7 @@ import temporalio.exceptions
 import temporalio.workflow
 from temporalio.api.enums.v1 import WorkflowTaskFailedCause
 from temporalio.bridge.worker import PollShutdownError
-from temporalio.converter import StorageDriverWorkflowInfo
-from temporalio.converter._extstore import (
-    StorageDriverStoreMetadata,
-    store_metadata_context,
-)
+from temporalio.converter import StorageDriverStoreContext, StorageDriverWorkflowInfo
 
 from . import _command_aware_visitor
 from ._interceptor import (
@@ -294,17 +289,9 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                 namespace=self._namespace,
                 workflow_id=workflow_id,
             )
-            data_converter = self._data_converter.with_context(workflow_context)
-            if workflow:
-                data_converter = _CommandAwareDataConverter.create(
-                    instance=workflow.instance,
-                    context_free_dc=self._data_converter,
-                    workflow_context_dc=data_converter,
-                    workflow_context=workflow_context,
-                )
-            # Set default store metadata for decode_activation
-            with store_metadata_context(
-                StorageDriverStoreMetadata(
+            data_converter = self._data_converter._with_contexts(
+                workflow_context,
+                StorageDriverStoreContext(
                     target=StorageDriverWorkflowInfo(
                         id=workflow_id,
                         run_id=act.run_id,
@@ -315,14 +302,21 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
                         ),
                         namespace=self._namespace,
                     ),
+                ),
+            )
+            if workflow:
+                data_converter = _CommandAwareDataConverter.create(
+                    instance=workflow.instance,
+                    context_free_dc=self._data_converter,
+                    workflow_context_dc=data_converter,
+                    workflow_context=workflow_context,
                 )
-            ):
-                download_metrics = await temporalio.bridge.worker.decode_activation(
-                    act,
-                    data_converter,
-                    decode_headers=self._encode_headers,
-                    storage_concurrency_limit=self._max_workflow_task_external_storage_concurrency,
-                )
+            download_metrics = await temporalio.bridge.worker.decode_activation(
+                act,
+                data_converter,
+                decode_headers=self._encode_headers,
+                storage_concurrency_limit=self._max_workflow_task_external_storage_concurrency,
+            )
             if not workflow:
                 assert init_job
                 workflow = _RunningWorkflow(
@@ -916,13 +910,6 @@ class _CommandAwareDataConverter(temporalio.converter.DataConverter):
             return self._ca_workflow_context_dc
         return self._ca_context_free_dc.with_context(context)
 
-    @contextlib.contextmanager
-    def _store_metadata_context(self) -> Iterator[None]:
-        command_info = _command_aware_visitor.current_command_info.get()
-        metadata = self._ca_instance.get_external_store_metadata(command_info)
-        with store_metadata_context(metadata):
-            yield
-
     async def _encode_payload_sequence(
         self, payloads: Sequence[temporalio.api.common.v1.Payload]
     ) -> list[temporalio.api.common.v1.Payload]:
@@ -931,10 +918,10 @@ class _CommandAwareDataConverter(temporalio.converter.DataConverter):
     async def _external_store_payload_sequence(
         self, payloads: Sequence[temporalio.api.common.v1.Payload]
     ) -> list[temporalio.api.common.v1.Payload]:
-        with self._store_metadata_context():
-            return await self._get_current_dc()._external_store_payload_sequence(
-                payloads
-            )
+        command_info = _command_aware_visitor.current_command_info.get()
+        store_ctx = self._ca_instance.get_external_store_context(command_info)
+        dc = self._get_current_dc()._with_store_context(store_ctx)
+        return await dc._external_store_payload_sequence(payloads)
 
     async def _external_retrieve_payload_sequence(
         self, payloads: Sequence[temporalio.api.common.v1.Payload]

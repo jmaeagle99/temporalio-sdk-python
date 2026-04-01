@@ -34,10 +34,10 @@ import temporalio.common
 import temporalio.converter
 import temporalio.converter._payload_limits
 import temporalio.exceptions
-from temporalio.converter import StorageDriverActivityInfo, StorageDriverWorkflowInfo
-from temporalio.converter._extstore import (
-    StorageDriverStoreMetadata,
-    store_metadata_context,
+from temporalio.converter import (
+    StorageDriverActivityInfo,
+    StorageDriverStoreContext,
+    StorageDriverWorkflowInfo,
 )
 
 from ._interceptor import (
@@ -257,7 +257,6 @@ class _ActivityWorker:
             return
 
         data_converter = self._data_converter
-        store_metadata: StorageDriverStoreMetadata | None = None
         if activity.info:
             context = temporalio.converter.ActivitySerializationContext(
                 namespace=activity.info.namespace,
@@ -268,14 +267,15 @@ class _ActivityWorker:
                 activity_task_queue=self._task_queue,
                 is_local=activity.info.is_local,
             )
-            data_converter = data_converter.with_context(context)
-
-            store_metadata = StorageDriverStoreMetadata(
-                target=StorageDriverActivityInfo(
-                    id=activity.info.activity_id,
-                    type=activity.info.activity_type,
-                    run_id=activity.info.activity_run_id,
-                    namespace=activity.info.namespace,
+            data_converter = data_converter._with_contexts(
+                context,
+                StorageDriverStoreContext(
+                    target=StorageDriverActivityInfo(
+                        id=activity.info.activity_id,
+                        type=activity.info.activity_type,
+                        run_id=activity.info.activity_run_id,
+                        namespace=activity.info.namespace,
+                    ),
                 ),
             )
 
@@ -285,8 +285,7 @@ class _ActivityWorker:
                 task_token=task_token
             )
             if details:
-                with store_metadata_context(store_metadata):
-                    heartbeat.details.extend(await data_converter.encode(details))
+                heartbeat.details.extend(await data_converter.encode(details))
             logger.debug("Recording heartbeat with details %s", details)
             self._bridge_worker().record_activity_heartbeat(heartbeat)
         except Exception as err:
@@ -352,158 +351,160 @@ class _ActivityWorker:
                 type=start.activity_type or None,
                 namespace=ns,
             )
-        with store_metadata_context(StorageDriverStoreMetadata(target=store_target)):
+        data_converter = self._data_converter._with_contexts(
+            context, StorageDriverStoreContext(target=store_target)
+        )
+        try:
+            result = await self._execute_activity(
+                start, running_activity, task_token, data_converter
+            )
+            [payload] = await data_converter.encode([result])
+            completion.result.completed.result.CopyFrom(payload)
+        except BaseException as err:
             try:
-                result = await self._execute_activity(
-                    start, running_activity, task_token, data_converter
-                )
-                [payload] = await data_converter.encode([result])
-                completion.result.completed.result.CopyFrom(payload)
-            except BaseException as err:
                 try:
-                    try:
-                        if isinstance(err, temporalio.activity._CompleteAsyncError):
-                            temporalio.activity.logger.debug(
-                                "Completing asynchronously"
-                            )
-                            completion.result.will_complete_async.SetInParent()
-                        elif (
-                            isinstance(
-                                err,
-                                (
-                                    asyncio.CancelledError,
-                                    temporalio.exceptions.CancelledError,
-                                ),
-                            )
-                            and running_activity.cancelled_due_to_heartbeat_error
-                        ):
-                            err = running_activity.cancelled_due_to_heartbeat_error
-                            temporalio.activity.logger.warning(
-                                f"Completing as failure during heartbeat with error of type {type(err)}: {err}",
-                            )
-                            await data_converter.encode_failure(
-                                err, completion.result.failed.failure
-                            )
-                        elif (
-                            isinstance(
-                                err,
-                                (
-                                    asyncio.CancelledError,
-                                    temporalio.exceptions.CancelledError,
-                                ),
-                            )
-                            and running_activity.cancellation_details.details
-                            and running_activity.cancellation_details.details.paused
-                        ):
-                            temporalio.activity.logger.warning(
-                                "Completing as failure due to unhandled cancel error produced by activity pause",
-                            )
-                            await data_converter.encode_failure(
-                                temporalio.exceptions.ApplicationError(
-                                    type="ActivityPause",
-                                    message="Unhandled activity cancel error produced by activity pause",
-                                ),
-                                completion.result.failed.failure,
-                            )
-                        elif (
-                            isinstance(
-                                err,
-                                (
-                                    asyncio.CancelledError,
-                                    temporalio.exceptions.CancelledError,
-                                ),
-                            )
-                            and running_activity.cancellation_details.details
-                            and running_activity.cancellation_details.details.reset
-                        ):
-                            temporalio.activity.logger.warning(
-                                "Completing as failure due to unhandled cancel error produced by activity reset",
-                            )
-                            await data_converter.encode_failure(
-                                temporalio.exceptions.ApplicationError(
-                                    type="ActivityReset",
-                                    message="Unhandled activity cancel error produced by activity reset",
-                                ),
-                                completion.result.failed.failure,
-                            )
-                        elif (
-                            isinstance(
-                                err,
-                                (
-                                    asyncio.CancelledError,
-                                    temporalio.exceptions.CancelledError,
-                                ),
-                            )
-                            and running_activity.cancelled_by_request
-                        ):
-                            temporalio.activity.logger.debug("Completing as cancelled")
-                            await data_converter.encode_failure(
-                                # TODO(cretz): Should use some other message?
-                                temporalio.exceptions.CancelledError("Cancelled"),
-                                completion.result.cancelled.failure,
-                            )
-                        elif isinstance(
+                    if isinstance(err, temporalio.activity._CompleteAsyncError):
+                        temporalio.activity.logger.debug(
+                            "Completing asynchronously"
+                        )
+                        completion.result.will_complete_async.SetInParent()
+                    elif (
+                        isinstance(
                             err,
-                            temporalio.converter._payload_limits._PayloadSizeError,
+                            (
+                                asyncio.CancelledError,
+                                temporalio.exceptions.CancelledError,
+                            ),
+                        )
+                        and running_activity.cancelled_due_to_heartbeat_error
+                    ):
+                        err = running_activity.cancelled_due_to_heartbeat_error
+                        temporalio.activity.logger.warning(
+                            f"Completing as failure during heartbeat with error of type {type(err)}: {err}",
+                        )
+                        await data_converter.encode_failure(
+                            err, completion.result.failed.failure
+                        )
+                    elif (
+                        isinstance(
+                            err,
+                            (
+                                asyncio.CancelledError,
+                                temporalio.exceptions.CancelledError,
+                            ),
+                        )
+                        and running_activity.cancellation_details.details
+                        and running_activity.cancellation_details.details.paused
+                    ):
+                        temporalio.activity.logger.warning(
+                            "Completing as failure due to unhandled cancel error produced by activity pause",
+                        )
+                        await data_converter.encode_failure(
+                            temporalio.exceptions.ApplicationError(
+                                type="ActivityPause",
+                                message="Unhandled activity cancel error produced by activity pause",
+                            ),
+                            completion.result.failed.failure,
+                        )
+                    elif (
+                        isinstance(
+                            err,
+                            (
+                                asyncio.CancelledError,
+                                temporalio.exceptions.CancelledError,
+                            ),
+                        )
+                        and running_activity.cancellation_details.details
+                        and running_activity.cancellation_details.details.reset
+                    ):
+                        temporalio.activity.logger.warning(
+                            "Completing as failure due to unhandled cancel error produced by activity reset",
+                        )
+                        await data_converter.encode_failure(
+                            temporalio.exceptions.ApplicationError(
+                                type="ActivityReset",
+                                message="Unhandled activity cancel error produced by activity reset",
+                            ),
+                            completion.result.failed.failure,
+                        )
+                    elif (
+                        isinstance(
+                            err,
+                            (
+                                asyncio.CancelledError,
+                                temporalio.exceptions.CancelledError,
+                            ),
+                        )
+                        and running_activity.cancelled_by_request
+                    ):
+                        temporalio.activity.logger.debug("Completing as cancelled")
+                        await data_converter.encode_failure(
+                            # TODO(cretz): Should use some other message?
+                            temporalio.exceptions.CancelledError("Cancelled"),
+                            completion.result.cancelled.failure,
+                        )
+                    elif isinstance(
+                        err,
+                        temporalio.converter._payload_limits._PayloadSizeError,
+                    ):
+                        temporalio.activity.logger.warning(
+                            err.message,
+                            extra={
+                                "__temporal_error_identifier": "PayloadSizeError"
+                            },
+                        )
+                        await data_converter.encode_failure(
+                            err, completion.result.failed.failure
+                        )
+                    else:
+                        if (
+                            isinstance(
+                                err,
+                                temporalio.exceptions.ApplicationError,
+                            )
+                            and err.category
+                            == temporalio.exceptions.ApplicationErrorCategory.BENIGN
                         ):
-                            temporalio.activity.logger.warning(
-                                err.message,
+                            # Downgrade log level to DEBUG for BENIGN application errors.
+                            temporalio.activity.logger.debug(
+                                "Completing activity as failed",
+                                exc_info=True,
                                 extra={
-                                    "__temporal_error_identifier": "PayloadSizeError"
+                                    "__temporal_error_identifier": "ActivityFailure"
                                 },
                             )
-                            await data_converter.encode_failure(
-                                err, completion.result.failed.failure
-                            )
                         else:
-                            if (
-                                isinstance(
-                                    err,
-                                    temporalio.exceptions.ApplicationError,
-                                )
-                                and err.category
-                                == temporalio.exceptions.ApplicationErrorCategory.BENIGN
-                            ):
-                                # Downgrade log level to DEBUG for BENIGN application errors.
-                                temporalio.activity.logger.debug(
-                                    "Completing activity as failed",
-                                    exc_info=True,
-                                    extra={
-                                        "__temporal_error_identifier": "ActivityFailure"
-                                    },
-                                )
-                            else:
-                                temporalio.activity.logger.warning(
-                                    "Completing activity as failed",
-                                    exc_info=True,
-                                    extra={
-                                        "__temporal_error_identifier": "ActivityFailure"
-                                    },
-                                )
-                            await data_converter.encode_failure(
-                                err, completion.result.failed.failure
+                            temporalio.activity.logger.warning(
+                                "Completing activity as failed",
+                                exc_info=True,
+                                extra={
+                                    "__temporal_error_identifier": "ActivityFailure"
+                                },
                             )
-                            # For broken executors, we have to fail the entire worker
-                            if isinstance(err, concurrent.futures.BrokenExecutor):
-                                self._fail_worker_exception_queue.put_nowait(err)
-                    # Handle PayloadSizeError from attempting to encode failure information
-                    except (
-                        temporalio.converter._payload_limits._PayloadSizeError
-                    ) as inner_err:
-                        temporalio.activity.logger.exception(inner_err.message)
-                        completion.result.Clear()
                         await data_converter.encode_failure(
-                            inner_err, completion.result.failed.failure
+                            err, completion.result.failed.failure
                         )
-                except Exception as inner_err:
-                    temporalio.activity.logger.exception(
-                        f"Exception handling failed, original error: {err}"
-                    )
+                        # For broken executors, we have to fail the entire worker
+                        if isinstance(err, concurrent.futures.BrokenExecutor):
+                            self._fail_worker_exception_queue.put_nowait(err)
+                # Handle PayloadSizeError from attempting to encode failure information
+                except (
+                    temporalio.converter._payload_limits._PayloadSizeError
+                ) as inner_err:
+                    temporalio.activity.logger.exception(inner_err.message)
                     completion.result.Clear()
-                    completion.result.failed.failure.message = (
-                        f"Failed building exception result: {inner_err}"
+                    await data_converter.encode_failure(
+                        inner_err, completion.result.failed.failure
                     )
-                    completion.result.failed.failure.application_failure_info.SetInParent()
+            except Exception as inner_err:
+                temporalio.activity.logger.exception(
+                    f"Exception handling failed, original error: {err}"
+                )
+                completion.result.Clear()
+                completion.result.failed.failure.message = (
+                    f"Failed building exception result: {inner_err}"
+                )
+                completion.result.failed.failure.application_failure_info.SetInParent()
 
         # Do final completion
         try:

@@ -130,41 +130,6 @@ class StorageDriverActivityInfo:
     """The activity type name, if available."""
 
 
-@dataclass(frozen=True, kw_only=True)
-class StorageDriverStoreMetadata:
-    """Store-only metadata available during external storage operations.
-
-    .. warning::
-        This API is experimental.
-    """
-
-    target: StorageDriverActivityInfo | StorageDriverWorkflowInfo | None = None
-    """The workflow or activity for which this payload is being stored."""
-
-
-_current_store_metadata: contextvars.ContextVar[StorageDriverStoreMetadata | None] = (
-    contextvars.ContextVar("_current_store_metadata", default=None)
-)
-
-
-@contextlib.contextmanager
-def store_metadata_context(
-    metadata: StorageDriverStoreMetadata | None,
-) -> Generator[None, None, None]:
-    """Context manager that sets store metadata and resets it on exit.
-
-    If metadata is None, yields without setting anything.
-    """
-    if metadata is None:
-        yield
-        return
-    token = _current_store_metadata.set(metadata)
-    try:
-        yield
-    finally:
-        _current_store_metadata.reset(token)
-
-
 @dataclass(frozen=True)
 class StorageDriverStoreContext:
     """Context passed to :meth:`StorageDriver.store` and ``driver_selector`` calls.
@@ -304,6 +269,14 @@ class ExternalStorage:
     for retrieval lookups.
     """
 
+    _store_context: StorageDriverStoreContext = dataclasses.field(
+        default=StorageDriverStoreContext(target=None),
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    """Store context bound to this instance via :meth:`_with_store_context`."""
+
     _claim_converter: ClassVar[JSONPlainPayloadConverter] = JSONPlainPayloadConverter(
         encoding=_REFERENCE_ENCODING.decode()
     )
@@ -363,22 +336,20 @@ class ExternalStorage:
             raise ValueError(f"No driver found with name '{name}'")
         return driver
 
-    @staticmethod
-    def _build_store_context() -> StorageDriverStoreContext:
-        meta = _current_store_metadata.get()
-        return StorageDriverStoreContext(
-            target=meta.target if meta else None,
-        )
+    def _with_store_context(self, ctx: StorageDriverStoreContext) -> ExternalStorage:
+        """Return a copy of this instance with ``ctx`` bound as the store context."""
+        result = dataclasses.replace(self)
+        object.__setattr__(result, "_store_context", ctx)
+        return result
 
     async def _store_payload(self, payload: Payload) -> Payload:
         start_time = time.monotonic()
-        context = self._build_store_context()
 
-        driver = self._select_driver(context, payload)
+        driver = self._select_driver(self._store_context, payload)
         if driver is None:
             return payload
 
-        claims = await driver.store(context, [payload])
+        claims = await driver.store(self._store_context, [payload])
 
         self._validate_claim_length(claims, expected=1, driver=driver)
 
@@ -413,11 +384,10 @@ class ExternalStorage:
         start_time = time.monotonic()
 
         results = list(payloads)
-        context = self._build_store_context()
 
         to_store: list[tuple[int, Payload, StorageDriver]] = []
         for index, payload in enumerate(payloads):
-            driver = self._select_driver(context, payload)
+            driver = self._select_driver(self._store_context, payload)
             if driver is None:
                 continue
             to_store.append((index, payload, driver))
@@ -433,7 +403,7 @@ class ExternalStorage:
 
         all_claims = await _gather_cancel_on_error(
             [
-                driver.store(context, [p for _, p in indexed_payloads])
+                driver.store(self._store_context, [p for _, p in indexed_payloads])
                 for driver, indexed_payloads in driver_group_list
             ]
         )

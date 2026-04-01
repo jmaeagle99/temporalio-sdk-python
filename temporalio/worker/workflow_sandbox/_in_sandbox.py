@@ -13,7 +13,7 @@ import temporalio.bridge.proto.workflow_completion
 import temporalio.converter
 import temporalio.worker._workflow_instance
 import temporalio.workflow
-from temporalio.converter._extstore import StorageDriverStoreMetadata
+from temporalio.converter._extstore import StorageDriverStoreContext
 from temporalio.worker import _command_aware_visitor
 
 logger = logging.getLogger(__name__)
@@ -90,9 +90,9 @@ class InSandbox:
         """Get serialization context."""
         return self.instance.get_serialization_context(command_info)
 
-    def get_external_store_metadata(
+    def get_external_store_context(
         self,
         command_info: _command_aware_visitor.CommandInfo | None,
-    ) -> StorageDriverStoreMetadata | None:
+    ) -> StorageDriverStoreContext:
         """Get store metadata for external storage."""
-        return self.instance.get_external_store_metadata(command_info)
+        return self.instance.get_external_store_context(command_info)

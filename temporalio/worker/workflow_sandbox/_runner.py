@@ -17,7 +17,7 @@ import temporalio.bridge.proto.workflow_completion
 import temporalio.common
 import temporalio.converter
 import temporalio.workflow
-from temporalio.converter._extstore import StorageDriverStoreMetadata
+from temporalio.converter._extstore import StorageDriverStoreContext
 from temporalio.worker import _command_aware_visitor
 
 from ...api.common.v1.message_pb2 import Payloads
@@ -207,19 +207,21 @@ class _Instance(WorkflowInstance):
         finally:
             self.importer.restriction_context.is_runtime = False
 
-    def get_external_store_metadata(
+    def get_external_store_context(
         self,
         command_info: _command_aware_visitor.CommandInfo | None,
-    ) -> StorageDriverStoreMetadata | None:
+    ) -> StorageDriverStoreContext:
         # Forward call to the sandboxed instance
         self.importer.restriction_context.is_runtime = True
         try:
             self._run_code(
                 "with __temporal_importer.applied():\n"
-                "  __temporal_metadata = __temporal_in_sandbox.get_external_store_metadata(__temporal_command_info)\n",
+                "  __temporal_context = __temporal_in_sandbox.get_external_store_context(__temporal_command_info)\n",
                 __temporal_importer=self.importer,
                 __temporal_command_info=command_info,
             )
-            return self.globals_and_locals.pop("__temporal_metadata", None)  # type: ignore
+            return self.globals_and_locals.pop(
+                "__temporal_context", StorageDriverStoreContext(target=None)
+            )  # type: ignore
         finally:
             self.importer.restriction_context.is_runtime = False

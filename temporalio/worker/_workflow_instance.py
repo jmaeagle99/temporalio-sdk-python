@@ -58,8 +58,7 @@ import temporalio.common
 import temporalio.converter
 import temporalio.exceptions
 import temporalio.workflow
-from temporalio.converter import StorageDriverWorkflowInfo
-from temporalio.converter._extstore import StorageDriverStoreMetadata
+from temporalio.converter import StorageDriverStoreContext, StorageDriverWorkflowInfo
 from temporalio.service import __version__
 
 from ..api.failure.v1.message_pb2 import Failure
@@ -185,17 +184,17 @@ class WorkflowInstance(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_external_store_metadata(
+    def get_external_store_context(
         self,
         command_info: _command_aware_visitor.CommandInfo | None,
-    ) -> StorageDriverStoreMetadata | None:
-        """Return appropriate store metadata for external storage operations.
+    ) -> StorageDriverStoreContext:
+        """Return appropriate store context for external storage operations.
 
         Args:
             command_info: Optional information identifying the associated command.
 
         Returns:
-            The store metadata, or None if no metadata should be set.
+            The store context associated with the command.
         """
         raise NotImplementedError
 
@@ -2238,10 +2237,10 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
                 workflow_id=self._info.workflow_id,
             )
 
-    def get_external_store_metadata(
+    def get_external_store_context(
         self,
         command_info: _command_aware_visitor.CommandInfo | None,
-    ) -> StorageDriverStoreMetadata | None:
+    ) -> StorageDriverStoreContext:
         ns = self._info.namespace
         current_wf = StorageDriverWorkflowInfo(
             id=self._info.workflow_id,
@@ -2251,7 +2250,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
         )
 
         if command_info is None:
-            return StorageDriverStoreMetadata(target=current_wf)
+            return StorageDriverStoreContext(target=current_wf)
 
         COMMAND_TYPE = temporalio.api.enums.v1.command_type_pb2.CommandType
 
@@ -2261,7 +2260,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             and command_info.command_seq in self._pending_child_workflows
         ):
             child = self._pending_child_workflows[command_info.command_seq]
-            return StorageDriverStoreMetadata(
+            return StorageDriverStoreContext(
                 target=StorageDriverWorkflowInfo(
                     id=child._input.id, type=child._input.workflow, namespace=ns
                 ),
@@ -2273,7 +2272,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             and command_info.command_seq in self._pending_external_signals
         ):
             _, target_id = self._pending_external_signals[command_info.command_seq]
-            return StorageDriverStoreMetadata(
+            return StorageDriverStoreContext(
                 target=StorageDriverWorkflowInfo(id=target_id, namespace=ns),
             )
 
@@ -2282,7 +2281,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             == COMMAND_TYPE.COMMAND_TYPE_COMPLETE_WORKFLOW_EXECUTION
             and self._info.parent is not None
         ):
-            return StorageDriverStoreMetadata(
+            return StorageDriverStoreContext(
                 target=StorageDriverWorkflowInfo(
                     id=self._info.parent.workflow_id,
                     run_id=self._info.parent.run_id,
@@ -2291,7 +2290,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             )
 
         else:
-            return StorageDriverStoreMetadata(target=current_wf)
+            return StorageDriverStoreContext(target=current_wf)
 
     def _instantiate_workflow_object(self) -> Any:
         if not self._workflow_input:

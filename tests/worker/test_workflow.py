@@ -1627,11 +1627,11 @@ class CustomWorkflowInstance(WorkflowInstance):
     ) -> temporalio.converter.SerializationContext | None:
         return self._unsandboxed.get_serialization_context(command_info)
 
-    def get_external_store_metadata(
+    def get_external_store_context(
         self,
         command_info: temporalio.worker._command_aware_visitor.CommandInfo | None,
-    ) -> temporalio.converter._extstore.StorageDriverStoreMetadata | None:
-        return self._unsandboxed.get_external_store_metadata(command_info)
+    ) -> temporalio.converter._extstore.StorageDriverStoreContext:
+        return self._unsandboxed.get_external_store_context(command_info)
 
 
 async def test_workflow_with_custom_runner(client: Client):
