@@ -6178,12 +6178,8 @@ class ScheduleActionStartWorkflow(ScheduleAction):
         action = temporalio.api.schedule.v1.ScheduleAction(
             start_workflow=temporalio.api.workflow.v1.NewWorkflowExecutionInfo(
                 workflow_id=self.id,
-                workflow_type=temporalio.api.common.v1.WorkflowType(
-                    name=self.workflow
-                ),
-                task_queue=temporalio.api.taskqueue.v1.TaskQueue(
-                    name=self.task_queue
-                ),
+                workflow_type=temporalio.api.common.v1.WorkflowType(name=self.workflow),
+                task_queue=temporalio.api.taskqueue.v1.TaskQueue(name=self.task_queue),
                 input=(
                     temporalio.api.common.v1.Payloads(
                         payloads=[
@@ -8306,9 +8302,7 @@ class _ClientImpl(OutboundInterceptor):
         if not resp.query_result.payloads:
             return None
         type_hints = [input.ret_type] if input.ret_type else None
-        results = await data_converter.decode(
-            resp.query_result.payloads, type_hints
-        )
+        results = await data_converter.decode(resp.query_result.payloads, type_hints)
         if not results:
             return None
         elif len(results) > 1:
@@ -8452,15 +8446,11 @@ class _ClientImpl(OutboundInterceptor):
         )
 
         if input.schedule_to_close_timeout is not None:
-            req.schedule_to_close_timeout.FromTimedelta(
-                input.schedule_to_close_timeout
-            )
+            req.schedule_to_close_timeout.FromTimedelta(input.schedule_to_close_timeout)
         if input.start_to_close_timeout is not None:
             req.start_to_close_timeout.FromTimedelta(input.start_to_close_timeout)
         if input.schedule_to_start_timeout is not None:
-            req.schedule_to_start_timeout.FromTimedelta(
-                input.schedule_to_start_timeout
-            )
+            req.schedule_to_start_timeout.FromTimedelta(input.schedule_to_start_timeout)
         if input.heartbeat_timeout is not None:
             req.heartbeat_timeout.FromTimedelta(input.heartbeat_timeout)
         if input.retry_policy is not None:
@@ -8670,9 +8660,7 @@ class _ClientImpl(OutboundInterceptor):
                 await data_converter.encode(input.args)
             )
         if input.headers is not None:  # type:ignore[reportUnnecessaryComparison]
-            await self._apply_headers(
-                input.headers, req.request.input.header.fields
-            )
+            await self._apply_headers(input.headers, req.request.input.header.fields)
         return req
 
     async def start_update_with_start_workflow(

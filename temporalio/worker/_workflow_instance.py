@@ -2241,12 +2241,20 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
         self,
         command_info: _command_aware_visitor.CommandInfo | None,
     ) -> StorageDriverStoreContext:
-        ns = self._info.namespace
+        # The current workflow is the default target for external store
+        # operations. For commands that target other workflows, those workflows
+        # are the target for that command's external store operation. For
+        # workflow activities, the target is the current workflow since the
+        # activity is bound to the lifetime of the current workflow, the
+        # activity run information is the same as the current workflow, and
+        # successfully completed activities are not involved in replay.
+        # Otherwise, the storage space for a given workflow would be disparate
+        # if stored under activity information.
         current_wf = StorageDriverWorkflowInfo(
             id=self._info.workflow_id,
             run_id=self._info.run_id,
             type=self._info.workflow_type,
-            namespace=ns,
+            namespace=self._info.namespace,
         )
 
         if command_info is None:
@@ -2262,7 +2270,9 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             child = self._pending_child_workflows[command_info.command_seq]
             return StorageDriverStoreContext(
                 target=StorageDriverWorkflowInfo(
-                    id=child._input.id, type=child._input.workflow, namespace=ns
+                    id=child._input.id,
+                    type=child._input.workflow,
+                    namespace=self._info.namespace,
                 ),
             )
 
@@ -2273,7 +2283,9 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
         ):
             _, target_id = self._pending_external_signals[command_info.command_seq]
             return StorageDriverStoreContext(
-                target=StorageDriverWorkflowInfo(id=target_id, namespace=ns),
+                target=StorageDriverWorkflowInfo(
+                    id=target_id, namespace=self._info.namespace
+                ),
             )
 
         elif (
@@ -2285,7 +2297,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
                 target=StorageDriverWorkflowInfo(
                     id=self._info.parent.workflow_id,
                     run_id=self._info.parent.run_id,
-                    namespace=ns,
+                    namespace=self._info.parent.namespace,
                 ),
             )
 

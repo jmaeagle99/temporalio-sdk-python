@@ -364,9 +364,7 @@ class _ActivityWorker:
             try:
                 try:
                     if isinstance(err, temporalio.activity._CompleteAsyncError):
-                        temporalio.activity.logger.debug(
-                            "Completing asynchronously"
-                        )
+                        temporalio.activity.logger.debug("Completing asynchronously")
                         completion.result.will_complete_async.SetInParent()
                     elif (
                         isinstance(
@@ -449,9 +447,7 @@ class _ActivityWorker:
                     ):
                         temporalio.activity.logger.warning(
                             err.message,
-                            extra={
-                                "__temporal_error_identifier": "PayloadSizeError"
-                            },
+                            extra={"__temporal_error_identifier": "PayloadSizeError"},
                         )
                         await data_converter.encode_failure(
                             err, completion.result.failed.failure
