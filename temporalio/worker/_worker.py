@@ -323,7 +323,8 @@ class Worker:
             max_workflow_task_external_storage_concurrency: Maximum number of
                 external storage I/O operations (store/retrieve) that may run
                 concurrently within a single workflow task activation.
-                Defaults to 10. WARNING: This setting is experimental.
+                Defaults to 3. Adjust this value based on your workload's needs.
+                WARNING: This setting is experimental.
 
         """
         config = WorkerConfig(

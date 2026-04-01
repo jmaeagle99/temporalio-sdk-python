@@ -27,7 +27,6 @@ from temporalio.converter._serialization_context import (
 _T = TypeVar("_T")
 
 _REFERENCE_ENCODING = b"json/external-storage-reference"
-_DEFAULT_PAYLOAD_SIZE_THRESHOLD = 256 * 1024
 
 
 @dataclass
@@ -211,10 +210,9 @@ class ExternalStorage(WithSerializationContext):
     one driver is registered, that driver is used for all store operations.
     """
 
-    payload_size_threshold: int | None = _DEFAULT_PAYLOAD_SIZE_THRESHOLD
+    payload_size_threshold: int = 256 * 1024
     """Minimum payload size in bytes before external storage is considered.
-    Defaults to 256 KiB. Must be greater than zero when set. Set to ``1`` to consider
-    every payload for external storage regardless of size.
+    Defaults to 256 KiB. Must be greater than or equal to zero.
     """
 
     _driver_map: dict[str, StorageDriver] = dataclasses.field(
@@ -236,17 +234,17 @@ class ExternalStorage(WithSerializationContext):
         """Validate drivers and build the internal name-keyed driver map.
 
         Raises :exc:`ValueError` if no drivers are provided, if
-        :attr:`payload_size_threshold` is zero or less than zero, if more
-        than one driver is registered without a :attr:`driver_selector`, or if
-        any two drivers share the same name.
+        :attr:`payload_size_threshold` is less than zero, if more than one
+        driver is registered without a :attr:`driver_selector`, or if any two
+        drivers share the same name.
         """
         if not self.drivers:
             raise ValueError(
                 "ExternalStorage.drivers must contain at least one driver."
             )
-        if self.payload_size_threshold is not None and self.payload_size_threshold <= 0:
+        if self.payload_size_threshold < 0:
             raise ValueError(
-                "ExternalStorage.payload_size_threshold must be greater than zero."
+                "ExternalStorage.payload_size_threshold must be greater than or equal to zero."
             )
         if len(self.drivers) > 1 and self.driver_selector is None:
             raise ValueError(
@@ -273,12 +271,7 @@ class ExternalStorage(WithSerializationContext):
         self, context: StorageDriverStoreContext, payload: Payload
     ) -> StorageDriver | None:
         """Returns the driver to use for this payload, or None to pass through."""
-        threshold = (
-            self.payload_size_threshold
-            if self.payload_size_threshold is not None
-            else _DEFAULT_PAYLOAD_SIZE_THRESHOLD
-        )
-        if payload.ByteSize() < threshold:
+        if payload.ByteSize() < self.payload_size_threshold:
             return None
         selector = self.driver_selector
         if selector is None:
