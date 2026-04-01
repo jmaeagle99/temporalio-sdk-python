@@ -27,6 +27,7 @@ from temporalio.converter._serialization_context import (
 _T = TypeVar("_T")
 
 _REFERENCE_ENCODING = b"json/external-storage-reference"
+_DEFAULT_PAYLOAD_SIZE_THRESHOLD = 256 * 1024
 
 
 @dataclass
@@ -210,10 +211,10 @@ class ExternalStorage(WithSerializationContext):
     one driver is registered, that driver is used for all store operations.
     """
 
-    payload_size_threshold: int | None = 256 * 1024
+    payload_size_threshold: int | None = _DEFAULT_PAYLOAD_SIZE_THRESHOLD
     """Minimum payload size in bytes before external storage is considered.
-    Defaults to 256 KiB. Set to ``None`` to consider every payload for
-    external storage regardless of size.
+    Defaults to 256 KiB. Must be greater than zero when set. Set to ``1`` to consider
+    every payload for external storage regardless of size.
     """
 
     _driver_map: dict[str, StorageDriver] = dataclasses.field(
@@ -272,10 +273,12 @@ class ExternalStorage(WithSerializationContext):
         self, context: StorageDriverStoreContext, payload: Payload
     ) -> StorageDriver | None:
         """Returns the driver to use for this payload, or None to pass through."""
-        if (
-            self.payload_size_threshold is not None
-            and payload.ByteSize() < self.payload_size_threshold
-        ):
+        threshold = (
+            self.payload_size_threshold
+            if self.payload_size_threshold is not None
+            else _DEFAULT_PAYLOAD_SIZE_THRESHOLD
+        )
+        if payload.ByteSize() < threshold:
             return None
         selector = self.driver_selector
         if selector is None:

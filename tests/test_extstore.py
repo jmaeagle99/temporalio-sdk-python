@@ -283,7 +283,7 @@ class TestDriverError:
             external_storage=ExternalStorage(
                 drivers=drivers,
                 driver_selector=lambda ctx, p: next(drivers_iter),
-                payload_size_threshold=None,
+                payload_size_threshold=1,
             )
         )
 
@@ -337,7 +337,7 @@ class TestDriverError:
             external_storage=ExternalStorage(
                 drivers=drivers,
                 driver_selector=lambda ctx, p: next(drivers_iter),
-                payload_size_threshold=None,
+                payload_size_threshold=1,
             )
         )
         encoded = await converter.encode(["payload_a", "payload_b"])
@@ -631,7 +631,7 @@ class TestMultiDriver:
             external_storage=ExternalStorage(
                 drivers=[driver_a, driver_b],
                 driver_selector=selector,
-                payload_size_threshold=None,
+                payload_size_threshold=1,
             )
         )
 
