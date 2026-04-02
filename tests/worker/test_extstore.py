@@ -585,7 +585,7 @@ async def test_worker_storage_drivers_populated_from_client(
             external_storage=ExternalStorage(
                 drivers=[driver1, driver2, driver3],
                 driver_selector=lambda _context, _payload: driver1,
-                payload_size_threshold=None,
+                payload_size_threshold=0,
             ),
         ),
     )
@@ -950,7 +950,7 @@ async def _make_tracking_client(
             temporalio.converter.default(),
             external_storage=ExternalStorage(
                 drivers=[driver],
-                payload_size_threshold=None,
+                payload_size_threshold=0,
             ),
         ),
     )
