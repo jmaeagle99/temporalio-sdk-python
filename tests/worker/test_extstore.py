@@ -1351,3 +1351,55 @@ async def test_store_metadata_standalone_activity(env: WorkflowEnvironment) -> N
     assert execute_ctx.target.id == activity_id
     assert execute_ctx.target.type == "echo_activity"
     assert execute_ctx.target.run_id is None
+
+
+@workflow.defn
+class ContinueAsNewExtStoreWorkflow:
+    """Workflow that continues-as-new once with a large payload.
+
+    Run 1: called with large_payload, calls continue_as_new with same payload.
+    Run 2: called with large_payload again (from CaN), returns immediately.
+    """
+
+    @workflow.run
+    async def run(self, large_payload: str) -> str:
+        if workflow.info().continued_run_id is None:
+            workflow.continue_as_new(large_payload)
+        return "done"
+
+
+async def test_extstore_continue_as_new_result_stored_under_current_run(
+    env: WorkflowEnvironment,
+) -> None:
+    """A CaN continuation's result payloads are stored under the continuation's
+    own run_id, not under the originating run's run_id.
+    """
+    client, driver = await _make_tracking_client(env)
+
+    async with new_worker(client, ContinueAsNewExtStoreWorkflow) as worker:
+        handle = await client.start_workflow(
+            ContinueAsNewExtStoreWorkflow.run,
+            "x" * 1024,
+            id=f"workflow-{uuid.uuid4()}",
+            task_queue=worker.task_queue,
+        )
+        first_run_id = (await handle.describe()).run_id
+        await handle.result()
+        last_run_id = (await handle.describe()).run_id
+    assert len(driver.store_contexts) == 3
+
+    # [0] Client starts workflow
+    client_ctx = driver.store_contexts[0]
+    assert isinstance(client_ctx.target, StorageDriverWorkflowInfo)
+    assert client_ctx.target.run_id is None
+
+    # [1] Workflow 1 encodes CaN args
+    can_args_ctx = driver.store_contexts[1]
+    assert isinstance(can_args_ctx.target, StorageDriverWorkflowInfo)
+    assert can_args_ctx.target.run_id == first_run_id
+
+    # [2] Workflow 2 encodes result in its own context
+    result_ctx = driver.store_contexts[2]
+    assert isinstance(result_ctx.target, StorageDriverWorkflowInfo)
+    assert result_ctx.target.run_id is not None
+    assert result_ctx.target.run_id == last_run_id

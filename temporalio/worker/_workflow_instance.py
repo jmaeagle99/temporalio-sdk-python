@@ -2292,6 +2292,7 @@ class _WorkflowInstanceImpl(  # type: ignore[reportImplicitAbstractClass]
             command_info.command_type
             == COMMAND_TYPE.COMMAND_TYPE_COMPLETE_WORKFLOW_EXECUTION
             and self._info.parent is not None
+            and self._info.continued_run_id is None
         ):
             return StorageDriverStoreContext(
                 target=StorageDriverWorkflowInfo(
