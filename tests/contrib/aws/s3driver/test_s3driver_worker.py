@@ -213,7 +213,8 @@ async def test_s3_driver_standalone_activity_input_key(
     # Input and output are the same LARGE bytes, so they deduplicate to one key.
     assert len(keys) == 1
     # Keyed under the activity, not a workflow.
-    assert f"/ns/default/at/large_io_activity/ai/{activity_id}/ri/null/" in keys[0]
+    assert f"/ns/default/at/large_io_activity/ai/{activity_id}/ri/" in keys[0]
+    assert "/ri/null/" not in keys[0]
     assert "/wt/" not in keys[0]
 
 
@@ -238,7 +239,8 @@ async def test_s3_driver_standalone_activity_output_key(
     keys = await _list_keys(aioboto3_client)
     # Only the output is large; keyed under the activity.
     assert len(keys) == 1
-    assert f"/ns/default/at/large_output_activity/ai/{activity_id}/ri/null/" in keys[0]
+    assert f"/ns/default/at/large_output_activity/ai/{activity_id}/ri/" in keys[0]
+    assert "/ri/null/" not in keys[0]
     assert "/wt/" not in keys[0]
 
 
