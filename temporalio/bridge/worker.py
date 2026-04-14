@@ -58,6 +58,9 @@ class WorkerConfig:
     nexus_task_poller_behavior: PollerBehavior
     plugins: Sequence[str]
     storage_drivers: set[str]
+    disable_payload_error_limit: bool
+    payload_size_warn_limit: int | None
+    memo_size_warn_limit: int | None
 
 
 @dataclass
@@ -344,19 +347,14 @@ async def encode_completion(
         skip_headers=not encode_headers,
     ).visit(_Visitor(data_converter._encode_payload_sequence), completion)
 
-    async def _store_and_validate(
-        payloads: Sequence[Payload],
-    ) -> list[Payload]:
-        stored = await data_converter._external_store_payload_sequence(payloads)
-        data_converter._validate_payload_limits(stored)
-        return stored
-
     metrics = temporalio.converter._extstore.StorageOperationMetrics()
     with metrics.track():
         await CommandAwarePayloadVisitor(
             skip_search_attributes=True,
             skip_headers=not encode_headers,
             concurrency_limit=storage_concurrency_limit,
-        ).visit(_Visitor(_store_and_validate), completion)
+        ).visit(
+            _Visitor(data_converter._external_store_payload_sequence), completion
+        )
 
     return metrics

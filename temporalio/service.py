@@ -146,6 +146,8 @@ class ConnectConfig:
     lazy: bool = False
     runtime: temporalio.runtime.Runtime | None = None
     http_connect_proxy_config: HttpConnectProxyConfig | None = None
+    payload_size_warn_limit: int | None = None
+    memo_size_warn_limit: int | None = None
 
     def __post_init__(self) -> None:
         """Set extra defaults on unset properties."""
@@ -203,6 +205,8 @@ class ConnectConfig:
                 if self.http_connect_proxy_config
                 else None
             ),
+            payload_size_warn_limit=self.payload_size_warn_limit,
+            memo_size_warn_limit=self.memo_size_warn_limit,
         )
 
 

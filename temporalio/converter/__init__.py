@@ -36,7 +36,6 @@ from temporalio.converter._payload_converter import (
 )
 from temporalio.converter._payload_limits import (
     PayloadLimitsConfig,
-    PayloadSizeWarning,
 )
 from temporalio.converter._search_attributes import (
     decode_search_attributes,
@@ -79,7 +78,6 @@ __all__ = [
     "PayloadCodec",
     "PayloadConverter",
     "PayloadLimitsConfig",
-    "PayloadSizeWarning",
     "SerializationContext",
     "WithSerializationContext",
     "WorkflowSerializationContext",

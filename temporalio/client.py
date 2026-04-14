@@ -207,6 +207,8 @@ class Client:
             lazy=lazy,
             runtime=runtime,
             http_connect_proxy_config=http_connect_proxy_config,
+            payload_size_warn_limit=data_converter.payload_limits.payload_size_warning,
+            memo_size_warn_limit=data_converter.payload_limits.memo_size_warning,
         )
 
         def make_lambda(

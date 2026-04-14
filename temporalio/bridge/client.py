@@ -71,6 +71,8 @@ class ClientConfig:
     client_name: str
     client_version: str
     http_connect_proxy_config: ClientHttpConnectProxyConfig | None
+    payload_size_warn_limit: int | None
+    memo_size_warn_limit: int | None
 
 
 @dataclass

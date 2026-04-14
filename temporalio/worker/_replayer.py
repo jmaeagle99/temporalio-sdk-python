@@ -334,12 +334,16 @@ class Replayer:
                     ),
                     plugins=[plugin.name() for plugin in self.plugins],
                     storage_drivers=storage_driver_types,
+                    # Payload size limits are not applicable during replay
+                    disable_payload_error_limit=True,
+                    payload_size_warn_limit=None,
+                    memo_size_warn_limit=None,
                 ),
             )
             bridge_worker_scope = bridge_worker
 
             # Start worker
-            workflow_worker_task = asyncio.create_task(workflow_worker.run(None))
+            workflow_worker_task = asyncio.create_task(workflow_worker.run())
 
             # Yield iterator
             async def replay_iterator() -> AsyncIterator[WorkflowReplayResult]:

@@ -63,6 +63,9 @@ pub struct WorkerConfig {
     nexus_task_poller_behavior: PollerBehavior,
     plugins: Vec<String>,
     storage_drivers: HashSet<String>,
+    disable_payload_error_limit: bool,
+    payload_size_warn_limit: Option<u64>,
+    memo_size_warn_limit: Option<u64>,
 }
 
 #[derive(FromPyObject)]
@@ -769,6 +772,9 @@ fn convert_worker_config(
                 .map(|r#type| StorageDriverInfo { r#type })
                 .collect::<HashSet<_>>(),
         )
+        .disable_payload_error_limit(conf.disable_payload_error_limit)
+        .maybe_payload_size_warn_limit(conf.payload_size_warn_limit)
+        .maybe_memo_size_warn_limit(conf.memo_size_warn_limit)
         .build()
         .map_err(|err| PyValueError::new_err(format!("Invalid worker config: {err}")))
 }

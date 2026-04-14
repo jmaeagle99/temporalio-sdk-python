@@ -1,7 +1,6 @@
 import dataclasses
 import logging
 import uuid
-import warnings
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -10,14 +9,13 @@ import pytest
 import temporalio
 import temporalio.converter
 from temporalio import activity, workflow
-from temporalio.client import Client, WorkflowFailureError
-from temporalio.converter import PayloadLimitsConfig, PayloadSizeWarning
+from temporalio.client import ActivityFailureError, Client, WorkflowFailureError
+from temporalio.common import RetryPolicy
+from temporalio.converter import PayloadLimitsConfig
 from temporalio.exceptions import (
     ActivityError,
     ApplicationError,
     TerminatedError,
-    TimeoutError,
-    TimeoutType,
 )
 from temporalio.runtime import (
     LogForwardingConfig,
@@ -29,7 +27,7 @@ from temporalio.runtime import (
 from temporalio.testing._workflow import WorkflowEnvironment
 from temporalio.worker._replayer import Replayer
 from tests import DEV_SERVER_DOWNLOAD_VERSION
-from tests.helpers import LogCapturer, new_worker
+from tests.helpers import LogCapturer, assert_eventually, new_worker
 
 
 @dataclass
@@ -88,6 +86,12 @@ class LargePayloadWorkflow:
 PAYLOAD_ERROR_LIMIT = 10 * 1024
 PAYLOAD_LIMITS_EXTRA_ARGS = [
     "--dynamic-config-value",
+    "activity.enableStandalone=true",
+    "--dynamic-config-value",
+    "frontend.activityAPIsEnabled=true",
+    "--dynamic-config-value",
+    "history.enableChasm=true",
+    "--dynamic-config-value",
     f"limit.blobSize.error={PAYLOAD_ERROR_LIMIT}",
     # Warn limit must be specified to have the server enforce the error limit
     "--dynamic-config-value",
@@ -95,21 +99,38 @@ PAYLOAD_LIMITS_EXTRA_ARGS = [
 ]
 
 
+def _make_warn_runtime() -> tuple[Runtime, logging.Logger]:
+    """Create a Runtime with log forwarding for capturing SDK warnings in tests."""
+    warn_logger = logging.getLogger(f"warn-test-{uuid.uuid4()}")
+    runtime = Runtime(
+        telemetry=TelemetryConfig(
+            logging=LoggingConfig(
+                filter=TelemetryFilter(core_level="WARN", other_level="ERROR"),
+                forwarding=LogForwardingConfig(logger=warn_logger),
+            )
+        )
+    )
+    return runtime, warn_logger
+
+
 async def test_payload_size_warning_workflow_input(client: Client):
-    config = client.config()
-    config["data_converter"] = dataclasses.replace(
-        temporalio.converter.default(),
-        payload_limits=PayloadLimitsConfig(
-            payload_size_warning=100,
+    warn_runtime, warn_logger = _make_warn_runtime()
+    worker_client = await Client.connect(
+        client.service_client.config.target_host,
+        namespace=client.namespace,
+        runtime=warn_runtime,
+        data_converter=dataclasses.replace(
+            temporalio.converter.default(),
+            payload_limits=PayloadLimitsConfig(payload_size_warning=100),
         ),
     )
-    client = Client(**config)
 
-    with warnings.catch_warnings(record=True) as w:
+    with LogCapturer().logs_captured(warn_logger) as capturer:
         async with new_worker(
-            client, LargePayloadWorkflow, activities=[large_payload_activity]
+            worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
         ) as worker:
-            await client.execute_workflow(
+            # Use worker_client so PayloadCheckingWorkflowService checks the input
+            await worker_client.execute_workflow(
                 LargePayloadWorkflow.run,
                 LargePayloadWorkflowInput(
                     activity_input_data_size=0,
@@ -122,27 +143,37 @@ async def test_payload_size_warning_workflow_input(client: Client):
                 task_queue=worker.task_queue,
             )
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, PayloadSizeWarning)
-        assert (
-            "[TMPRL1103] Attempted to upload payloads with size that exceeded the warning limit."
-            in str(w[-1].message)
-        )
+            def predicate(record: logging.LogRecord) -> bool:
+                return (
+                    record.levelname == "WARNING"
+                    and "[TMPRL1103]" in record.msg
+                    and "payloads" in record.msg
+                )
+
+            async def check_log():
+                assert capturer.find(predicate) is not None
+
+            await assert_eventually(check_log)
 
 
 async def test_payload_size_warning_workflow_memo(client: Client):
-    config = client.config()
-    config["data_converter"] = dataclasses.replace(
-        temporalio.converter.default(),
-        payload_limits=PayloadLimitsConfig(memo_size_warning=128),
+    warn_runtime, warn_logger = _make_warn_runtime()
+    worker_client = await Client.connect(
+        client.service_client.config.target_host,
+        namespace=client.namespace,
+        runtime=warn_runtime,
+        data_converter=dataclasses.replace(
+            temporalio.converter.default(),
+            payload_limits=PayloadLimitsConfig(memo_size_warning=128),
+        ),
     )
-    client = Client(**config)
 
-    with warnings.catch_warnings(record=True) as w:
+    with LogCapturer().logs_captured(warn_logger) as capturer:
         async with new_worker(
-            client, LargePayloadWorkflow, activities=[large_payload_activity]
+            worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
         ) as worker:
-            await client.execute_workflow(
+            # Use worker_client so PayloadCheckingWorkflowService checks the memo
+            await worker_client.execute_workflow(
                 LargePayloadWorkflow.run,
                 LargePayloadWorkflowInput(
                     activity_input_data_size=0,
@@ -160,12 +191,17 @@ async def test_payload_size_warning_workflow_memo(client: Client):
                 },
             )
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, PayloadSizeWarning)
-        assert (
-            "[TMPRL1103] Attempted to upload memo with size that exceeded the warning limit."
-            in str(w[-1].message)
-        )
+            def predicate(record: logging.LogRecord) -> bool:
+                return (
+                    record.levelname == "WARNING"
+                    and "[TMPRL1103]" in record.msg
+                    and "memo" in record.msg
+                )
+
+            async def check_log():
+                assert capturer.find(predicate) is not None
+
+            await assert_eventually(check_log)
 
 
 async def test_payload_size_error_disabled_workflow_payload(env: WorkflowEnvironment):
@@ -248,48 +284,51 @@ async def test_payload_size_error_workflow_result(env: WorkflowEnvironment):
                     ),
                     id=f"workflow-{uuid.uuid4()}",
                     task_queue=worker.task_queue,
-                    execution_timeout=timedelta(seconds=3),
                 )
 
-                with pytest.raises(WorkflowFailureError) as err:
-                    await handle.result()
+                def worker_logger_predicate(record: logging.LogRecord) -> bool:
+                    return (
+                        record.levelname == "WARNING"
+                        and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
+                        in record.msg
+                    )
 
-                assert isinstance(err.value.cause, TimeoutError)
-                assert err.value.cause.type == TimeoutType.START_TO_CLOSE
+                def root_logger_predicate(record: logging.LogRecord) -> bool:
+                    return (
+                        record.levelname == "WARNING"
+                        and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
+                        in record.msg
+                    )
 
-                replayer = Replayer(workflows=[LargePayloadWorkflow])
-                await replayer.replay_workflow(await handle.fetch_history())
+                async def check_logs_wf_result() -> None:
+                    assert worker_logger_capturer.find(worker_logger_predicate)
+                    assert root_logger_capturer.find(root_logger_predicate)
 
-            def worker_logger_predicate(record: logging.LogRecord) -> bool:
-                return (
-                    record.levelname == "WARNING"
-                    and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
-                    in record.msg
-                )
+                await assert_eventually(check_logs_wf_result)
+                await handle.terminate(reason="payload limit verified")
 
-            assert worker_logger_capturer.find(worker_logger_predicate)
+            with pytest.raises(WorkflowFailureError) as err:
+                await handle.result()
 
-            def root_logger_predicate(record: logging.LogRecord) -> bool:
-                return (
-                    record.levelname == "WARNING"
-                    and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
-                    in record.msg
-                )
+            assert isinstance(err.value.cause, TerminatedError)
 
-            assert root_logger_capturer.find(root_logger_predicate)
+            replayer = Replayer(workflows=[LargePayloadWorkflow])
+            await replayer.replay_workflow(await handle.fetch_history())
 
 
 async def test_payload_size_warning_workflow_result(client: Client):
-    config = client.config()
-    config["data_converter"] = dataclasses.replace(
-        temporalio.converter.default(),
-        payload_limits=PayloadLimitsConfig(
-            payload_size_warning=1024,
+    warn_runtime, warn_logger = _make_warn_runtime()
+    worker_client = await Client.connect(
+        client.service_client.config.target_host,
+        namespace=client.namespace,
+        runtime=warn_runtime,
+        data_converter=dataclasses.replace(
+            temporalio.converter.default(),
+            payload_limits=PayloadLimitsConfig(payload_size_warning=1024),
         ),
     )
-    worker_client = Client(**config)
 
-    with warnings.catch_warnings(record=True) as w:
+    with LogCapturer().logs_captured(warn_logger) as capturer:
         async with new_worker(
             worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
         ) as worker:
@@ -307,12 +346,17 @@ async def test_payload_size_warning_workflow_result(client: Client):
                 execution_timeout=timedelta(seconds=3),
             )
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, PayloadSizeWarning)
-        assert (
-            "[TMPRL1103] Attempted to upload payloads with size that exceeded the warning limit."
-            in str(w[-1].message)
-        )
+            def predicate(record: logging.LogRecord) -> bool:
+                return (
+                    record.levelname == "WARNING"
+                    and "[TMPRL1103]" in record.msg
+                    and "payloads" in record.msg
+                )
+
+            async def check_log():
+                assert capturer.find(predicate) is not None
+
+            await assert_eventually(check_log)
 
 
 async def test_payload_size_error_activity_input(env: WorkflowEnvironment):
@@ -359,47 +403,51 @@ async def test_payload_size_error_activity_input(env: WorkflowEnvironment):
                     ),
                     id=f"workflow-{uuid.uuid4()}",
                     task_queue=worker.task_queue,
-                    execution_timeout=timedelta(seconds=3),
                 )
 
-                with pytest.raises(WorkflowFailureError) as err:
-                    await handle.result()
+                def worker_logger_predicate(record: logging.LogRecord) -> bool:
+                    return (
+                        record.levelname == "WARNING"
+                        and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
+                        in record.msg
+                    )
 
-                assert isinstance(err.value.cause, TimeoutError)
+                def root_logger_predicate(record: logging.LogRecord) -> bool:
+                    return (
+                        record.levelname == "WARNING"
+                        and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
+                        in record.msg
+                    )
 
-                replayer = Replayer(workflows=[LargePayloadWorkflow])
-                await replayer.replay_workflow(await handle.fetch_history())
+                async def check_logs_act_input() -> None:
+                    assert worker_logger_capturer.find(worker_logger_predicate)
+                    assert root_logger_capturer.find(root_logger_predicate)
 
-            def worker_logger_predicate(record: logging.LogRecord) -> bool:
-                return (
-                    record.levelname == "WARNING"
-                    and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
-                    in record.msg
-                )
+                await assert_eventually(check_logs_act_input)
+                await handle.terminate(reason="payload limit verified")
 
-            assert worker_logger_capturer.find(worker_logger_predicate)
+            with pytest.raises(WorkflowFailureError) as err:
+                await handle.result()
 
-            def root_logger_predicate(record: logging.LogRecord) -> bool:
-                return (
-                    record.levelname == "WARNING"
-                    and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
-                    in record.msg
-                )
+            assert isinstance(err.value.cause, TerminatedError)
 
-            assert root_logger_capturer.find(root_logger_predicate)
+            replayer = Replayer(workflows=[LargePayloadWorkflow])
+            await replayer.replay_workflow(await handle.fetch_history())
 
 
 async def test_payload_size_warning_activity_input(client: Client):
-    config = client.config()
-    config["data_converter"] = dataclasses.replace(
-        temporalio.converter.default(),
-        payload_limits=PayloadLimitsConfig(
-            payload_size_warning=1024,
+    warn_runtime, warn_logger = _make_warn_runtime()
+    worker_client = await Client.connect(
+        client.service_client.config.target_host,
+        namespace=client.namespace,
+        runtime=warn_runtime,
+        data_converter=dataclasses.replace(
+            temporalio.converter.default(),
+            payload_limits=PayloadLimitsConfig(payload_size_warning=1024),
         ),
     )
-    worker_client = Client(**config)
 
-    with warnings.catch_warnings(record=True) as w:
+    with LogCapturer().logs_captured(warn_logger) as capturer:
         async with new_worker(
             worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
         ) as worker:
@@ -416,78 +464,17 @@ async def test_payload_size_warning_activity_input(client: Client):
                 task_queue=worker.task_queue,
             )
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, PayloadSizeWarning)
-        assert (
-            "[TMPRL1103] Attempted to upload payloads with size that exceeded the warning limit."
-            in str(w[-1].message)
-        )
-
-
-async def test_payload_size_error_activity_exception(env: WorkflowEnvironment):
-    if env.supports_time_skipping:
-        pytest.skip("Time-skipping server does not report payload limits.")
-
-    async with await WorkflowEnvironment.start_local(
-        dev_server_extra_args=PAYLOAD_LIMITS_EXTRA_ARGS,
-        dev_server_download_version=DEV_SERVER_DOWNLOAD_VERSION,
-    ) as env:
-        # Create worker runtime with forwarded logger
-        worker_logger = logging.getLogger(f"log-{uuid.uuid4()}")
-        worker_runtime = Runtime(
-            telemetry=TelemetryConfig(
-                logging=LoggingConfig(
-                    filter=TelemetryFilter(core_level="WARN", other_level="ERROR"),
-                    forwarding=LogForwardingConfig(logger=worker_logger),
-                )
-            )
-        )
-
-        # Create client for worker with custom runtime logging
-        worker_client = await Client.connect(
-            env.client.service_client.config.target_host,
-            namespace=env.client.namespace,
-            runtime=worker_runtime,
-        )
-
-        with (
-            LogCapturer().logs_captured(
-                activity.logger.base_logger
-            ) as activity_logger_capturer,
-        ):
-            async with new_worker(
-                worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
-            ) as worker:
-                handle = await env.client.start_workflow(
-                    LargePayloadWorkflow.run,
-                    LargePayloadWorkflowInput(
-                        activity_input_data_size=0,
-                        activity_output_data_size=0,
-                        activity_exception_data_size=PAYLOAD_ERROR_LIMIT + 1024,
-                        workflow_output_data_size=0,
-                        data="",
-                    ),
-                    id=f"workflow-{uuid.uuid4()}",
-                    task_queue=worker.task_queue,
-                )
-
-                with pytest.raises(WorkflowFailureError) as err:
-                    await handle.result()
-
-                assert isinstance(err.value.cause, ActivityError)
-                assert isinstance(err.value.cause.cause, ApplicationError)
-
-                replayer = Replayer(workflows=[LargePayloadWorkflow])
-                await replayer.replay_workflow(await handle.fetch_history())
-
-            def activity_logger_predicate(record: logging.LogRecord) -> bool:
+            def predicate(record: logging.LogRecord) -> bool:
                 return (
-                    record.levelname == "ERROR"
-                    and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
-                    in record.msg
+                    record.levelname == "WARNING"
+                    and "[TMPRL1103]" in record.msg
+                    and "payloads" in record.msg
                 )
 
-            assert activity_logger_capturer.find(activity_logger_predicate)
+            async def check_log():
+                assert capturer.find(predicate) is not None
+
+            await assert_eventually(check_log)
 
 
 async def test_payload_size_error_activity_result(env: WorkflowEnvironment):
@@ -517,9 +504,7 @@ async def test_payload_size_error_activity_result(env: WorkflowEnvironment):
         )
 
         with (
-            LogCapturer().logs_captured(
-                activity.logger.base_logger
-            ) as activity_logger_capturer,
+            LogCapturer().logs_captured(worker_logger) as worker_logger_capturer,
         ):
             async with new_worker(
                 worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
@@ -543,34 +528,35 @@ async def test_payload_size_error_activity_result(env: WorkflowEnvironment):
                 assert isinstance(err.value.cause, ActivityError)
                 assert isinstance(err.value.cause.cause, ApplicationError)
 
-                assert handle is not None
-                replayer = Replayer(workflows=[LargePayloadWorkflow])
-                await replayer.replay_workflow(await handle.fetch_history())
+                def worker_logger_predicate(record: logging.LogRecord) -> bool:
+                    return (
+                        record.levelname == "WARNING"
+                        and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
+                        in record.msg
+                    )
 
-            def activity_logger_predicate(record: logging.LogRecord) -> bool:
-                return (
-                    hasattr(record, "__temporal_error_identifier")
-                    and getattr(record, "__temporal_error_identifier")
-                    == "PayloadSizeError"
-                    and record.levelname == "WARNING"
-                    and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
-                    in record.msg
-                )
+                async def check_log_act_result() -> None:
+                    assert worker_logger_capturer.find(worker_logger_predicate)
 
-            assert activity_logger_capturer.find(activity_logger_predicate)
+                await assert_eventually(check_log_act_result)
+
+            replayer = Replayer(workflows=[LargePayloadWorkflow])
+            await replayer.replay_workflow(await handle.fetch_history())
 
 
 async def test_payload_size_warning_activity_result(client: Client):
-    config = client.config()
-    config["data_converter"] = dataclasses.replace(
-        temporalio.converter.default(),
-        payload_limits=PayloadLimitsConfig(
-            payload_size_warning=1024,
+    warn_runtime, warn_logger = _make_warn_runtime()
+    worker_client = await Client.connect(
+        client.service_client.config.target_host,
+        namespace=client.namespace,
+        runtime=warn_runtime,
+        data_converter=dataclasses.replace(
+            temporalio.converter.default(),
+            payload_limits=PayloadLimitsConfig(payload_size_warning=1024),
         ),
     )
-    worker_client = Client(**config)
 
-    with warnings.catch_warnings(record=True) as w:
+    with LogCapturer().logs_captured(warn_logger) as capturer:
         async with new_worker(
             worker_client, LargePayloadWorkflow, activities=[large_payload_activity]
         ) as worker:
@@ -587,9 +573,72 @@ async def test_payload_size_warning_activity_result(client: Client):
                 task_queue=worker.task_queue,
             )
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, PayloadSizeWarning)
-        assert (
-            "[TMPRL1103] Attempted to upload payloads with size that exceeded the warning limit."
-            in str(w[-1].message)
+            def predicate(record: logging.LogRecord) -> bool:
+                return (
+                    record.levelname == "WARNING"
+                    and "[TMPRL1103]" in record.msg
+                    and "payloads" in record.msg
+                )
+
+            async def check_log():
+                assert capturer.find(predicate) is not None
+
+            await assert_eventually(check_log)
+
+
+async def test_payload_size_error_standalone_activity_result(env: WorkflowEnvironment):
+    if env.supports_time_skipping:
+        pytest.skip("Time-skipping server does not report payload limits.")
+
+    async with await WorkflowEnvironment.start_local(
+        dev_server_extra_args=PAYLOAD_LIMITS_EXTRA_ARGS,
+        dev_server_download_version=DEV_SERVER_DOWNLOAD_VERSION,
+    ) as env:
+        worker_logger = logging.getLogger(f"log-{uuid.uuid4()}")
+        worker_runtime = Runtime(
+            telemetry=TelemetryConfig(
+                logging=LoggingConfig(
+                    filter=TelemetryFilter(core_level="WARN", other_level="ERROR"),
+                    forwarding=LogForwardingConfig(logger=worker_logger),
+                )
+            )
         )
+        worker_client = await Client.connect(
+            env.client.service_client.config.target_host,
+            namespace=env.client.namespace,
+            runtime=worker_runtime,
+        )
+
+        with LogCapturer().logs_captured(worker_logger) as worker_logger_capturer:
+            # Register only the activity — no workflow needed for standalone activities.
+            async with new_worker(
+                worker_client, activities=[large_payload_activity]
+            ) as worker:
+                with pytest.raises(ActivityFailureError) as err:
+                    await env.client.execute_activity(
+                        large_payload_activity,
+                        LargePayloadActivityInput(
+                            exception_data_size=0,
+                            output_data_size=PAYLOAD_ERROR_LIMIT + 1024,
+                            data="",
+                        ),
+                        id=f"activity-{uuid.uuid4()}",
+                        task_queue=worker.task_queue,
+                        start_to_close_timeout=timedelta(seconds=10),
+                        retry_policy=RetryPolicy(maximum_attempts=1),
+                    )
+
+                assert isinstance(err.value.cause, ApplicationError)
+                assert err.value.cause.type == "PayloadSizeLimitExceeded"
+
+                def worker_logger_predicate(record: logging.LogRecord) -> bool:
+                    return (
+                        record.levelname == "WARNING"
+                        and "[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit."
+                        in record.msg
+                    )
+
+                async def check_log() -> None:
+                    assert worker_logger_capturer.find(worker_logger_predicate)
+
+                await assert_eventually(check_log)

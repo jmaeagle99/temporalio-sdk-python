@@ -35,6 +35,8 @@ pub struct ClientConfig {
     retry_config: Option<ClientRetryConfig>,
     keep_alive_config: Option<ClientKeepAliveConfig>,
     http_connect_proxy_config: Option<ClientHttpConnectProxyConfig>,
+    payload_size_warn_limit: Option<u64>,
+    memo_size_warn_limit: Option<u64>,
 }
 
 #[derive(FromPyObject)]
@@ -256,7 +258,9 @@ impl ClientConfig {
         } else {
             None
         })
-        .maybe_metrics_meter(metrics_meter);
+        .maybe_metrics_meter(metrics_meter)
+        .maybe_payload_size_warn_limit(self.payload_size_warn_limit)
+        .maybe_memo_size_warn_limit(self.memo_size_warn_limit);
         Ok(conn_opts.build())
     }
 }
