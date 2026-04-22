@@ -485,10 +485,10 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
         )
         msg_details["event_id"] = completed_event_id
         msg_details["workflow_task_duration"] = _fmt_duration(task_duration)
-        msg_details["history_size"] = act.history_size_bytes
+        msg_details["workflow_history_size"] = act.history_size_bytes
         extra["event_id"] = completed_event_id
         extra["workflow_task_duration"] = task_duration
-        extra["history_size"] = act.history_size_bytes
+        extra["workflow_history_size"] = act.history_size_bytes
         if download_metrics.payload_count > 0:
             msg_details["payload_download_count"] = download_metrics.payload_count
             msg_details["payload_download_size"] = download_metrics.total_size
