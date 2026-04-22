@@ -477,7 +477,7 @@ class _WorkflowWorker:  # type:ignore[reportUnusedClass]
         completed_event_id = act.history_length + 1
         _running = self._running_workflows.get(act.run_id)
         _info = _running.get_info() if _running is not None else None
-        attempt = _info.attempt if _info is not None else "?"
+        attempt = _info.attempt if _info is not None else "unknown"
         log_id = f"{act.run_id}:{completed_event_id}:{attempt}"
         msg_details, extra = temporalio.workflow._build_log_context(
             _info._logger_details() if _info is not None else None,
