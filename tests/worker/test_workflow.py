@@ -1637,6 +1637,9 @@ class CustomWorkflowInstance(WorkflowInstance):
     ) -> temporalio.converter._extstore.StorageDriverStoreContext:
         return self._unsandboxed.get_external_store_context(command_info)
 
+    def get_info(self) -> temporalio.workflow.Info:
+        return self._unsandboxed.get_info()
+
 
 async def test_workflow_with_custom_runner(client: Client):
     runner = CustomWorkflowRunner()
@@ -7202,6 +7205,22 @@ async def test_in_workflow_util(client: Client):
     async with new_worker(client, InWorkflowUtilWorkflow) as worker:
         assert "in workflow" == await client.execute_workflow(
             InWorkflowUtilWorkflow.run,
+            id=f"workflow-{uuid.uuid4()}",
+            task_queue=worker.task_queue,
+        )
+
+
+@workflow.defn
+class LoopIsRunningWorkflow:
+    @workflow.run
+    async def run(self) -> bool:
+        return asyncio.get_running_loop().is_running()
+
+
+async def test_workflow_loop_is_running(client: Client):
+    async with new_worker(client, LoopIsRunningWorkflow) as worker:
+        assert await client.execute_workflow(
+            LoopIsRunningWorkflow.run,
             id=f"workflow-{uuid.uuid4()}",
             task_queue=worker.task_queue,
         )
