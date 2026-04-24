@@ -14,12 +14,14 @@ from typing_extensions import Self
 import temporalio.api.common.v1
 import temporalio.api.failure.v1
 import temporalio.common
+from temporalio.api.sdk.v1.external_storage_pb2 import ExternalStorageReference
 from temporalio.converter._extstore import (
-    _REFERENCE_ENCODING,
     ExternalStorage,
     StorageDriverStoreContext,
     StorageWarning,
 )
+
+_REFERENCE_MESSAGE_TYPE = ExternalStorageReference.DESCRIPTOR.full_name.encode()
 from temporalio.converter._failure_converter import (
     FailureConverter,
 )
@@ -308,7 +310,7 @@ class DataConverter(WithSerializationContext):
             await self.external_storage._retrieve_payloads(payloads)
         else:
             if any(
-                p.metadata.get("encoding") == _REFERENCE_ENCODING
+                p.metadata.get("messageType") == _REFERENCE_MESSAGE_TYPE
                 for p in payloads.payloads
             ):
                 warnings.warn(
@@ -349,7 +351,7 @@ class DataConverter(WithSerializationContext):
             )
         else:
             if any(
-                p.metadata.get("encoding") == _REFERENCE_ENCODING
+                p.metadata.get("messageType") == _REFERENCE_MESSAGE_TYPE
                 for p in retrieved_payloads
             ):
                 warnings.warn(

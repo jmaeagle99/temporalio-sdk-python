@@ -6,18 +6,38 @@ from collections.abc import Sequence
 import pytest
 
 from temporalio.api.common.v1 import Payload
+from temporalio.api.sdk.v1.external_storage_pb2 import ExternalStorageReference
 from temporalio.converter import (
     DataConverter,
     ExternalStorage,
-    JSONPlainPayloadConverter,
     PayloadCodec,
     StorageDriver,
     StorageDriverClaim,
     StorageDriverRetrieveContext,
     StorageDriverStoreContext,
 )
-from temporalio.converter._extstore import _StorageReference
+from temporalio.converter._extstore import _REFERENCE_ENCODING, _StorageReference
+from temporalio.converter._payload_converter import (
+    JSONPlainPayloadConverter,
+    JSONProtoPayloadConverter,
+)
 from temporalio.exceptions import ApplicationError
+
+_legacy_ref_converter = JSONPlainPayloadConverter(encoding=_REFERENCE_ENCODING.decode())
+
+
+def _make_legacy_payload(
+    driver_name: str, claim_data: dict[str, str], size_bytes: int
+) -> Payload:
+    """Build a reference payload in the old ``json/external-storage-reference`` format."""
+    ref = _StorageReference(
+        driver_name=driver_name,
+        driver_claim=StorageDriverClaim(claim_data=claim_data),
+    )
+    payload = _legacy_ref_converter.to_payload(ref)
+    assert payload is not None
+    payload.external_payloads.add().size_bytes = size_bytes
+    return payload
 
 
 class InMemoryTestDriver(StorageDriver):
@@ -131,17 +151,13 @@ class TestDataConverterExternalStorage:
         reference_payload = encoded[0]
         assert len(reference_payload.external_payloads) > 0
 
-        # The payload should contain a serialized _ExternalStorageReference
-        # Deserialize it to verify structure using the same encoding
-        claim_converter = JSONPlainPayloadConverter(
-            encoding="json/external-storage-reference"
+        reference = JSONProtoPayloadConverter().from_payload(
+            reference_payload, ExternalStorageReference
         )
-        reference = claim_converter.from_payload(reference_payload, _StorageReference)
 
-        assert isinstance(reference, _StorageReference)
+        assert isinstance(reference, ExternalStorageReference)
         assert "test-driver" == reference.driver_name
-        assert isinstance(reference.driver_claim, StorageDriverClaim)
-        assert "key" in reference.driver_claim.claim_data
+        assert "key" in reference.claim_data
 
     async def test_extstore_composite_conditional(self):
         """Test using multiple drivers based on size."""
@@ -482,9 +498,10 @@ class TestMultiDriver:
         assert second._store_calls == 0
 
         # The reference in history names the first driver.
-        ref = JSONPlainPayloadConverter(
-            encoding="json/external-storage-reference"
-        ).from_payload(encoded[0], _StorageReference)
+        ref = JSONProtoPayloadConverter().from_payload(
+            encoded[0], ExternalStorageReference
+        )
+        assert isinstance(ref, ExternalStorageReference)
         assert ref.driver_name == "driver-first"
 
         # Retrieval also goes to the first driver.
@@ -692,6 +709,79 @@ class TestMultiDriver:
                 drivers=[driver],
                 payload_size_threshold=threshold,
             )
+
+
+class TestBackwardCompat:
+    """Tests backward compatibility with the legacy ``json/external-storage-reference``
+    format emitted before the ExternalStorageReference proto was introduced."""
+
+    async def test_legacy_format_single_payload_decode(self):
+        """A single payload in the legacy reference format is retrieved correctly."""
+        driver = InMemoryTestDriver()
+
+        # Pre-populate the driver's storage with a serialized payload.
+        original_value = "x" * 200
+        inner_payload = (await DataConverter().encode([original_value]))[0]
+        stored_key = "payload-0"
+        driver._storage[stored_key] = inner_payload.SerializeToString()
+
+        legacy_payload = _make_legacy_payload(
+            driver_name=driver.name(),
+            claim_data={"key": stored_key},
+            size_bytes=inner_payload.ByteSize(),
+        )
+
+        converter = DataConverter(
+            external_storage=ExternalStorage(
+                drivers=[driver],
+                payload_size_threshold=100,
+            )
+        )
+        decoded = await converter.decode([legacy_payload], [str])
+        assert decoded[0] == original_value
+        assert driver._retrieve_calls == 1
+
+    async def test_legacy_and_new_format_mixed_batch_decode(self):
+        """A batch containing legacy-format, new proto-format, and inline payloads
+        all decode correctly. Both external payloads are grouped into a single
+        retrieve() call since they share the same driver."""
+        driver = InMemoryTestDriver()
+        converter = DataConverter(
+            external_storage=ExternalStorage(
+                drivers=[driver],
+                payload_size_threshold=50,
+            )
+        )
+
+        # Encode two values via the normal path to get a new-format reference and
+        # an inline payload.
+        new_value = "new-format-value" * 20
+        inline_value = "small"
+        encoded = await converter.encode([new_value, inline_value])
+        new_format_payload = encoded[0]  # externalized in new ExternalStorageReference format
+        inline_payload = encoded[1]  # below threshold, stored inline
+        assert driver._store_calls == 1
+
+        # Manually build a legacy-format reference pointing at a pre-populated entry.
+        legacy_value = "legacy-format-value" * 20
+        legacy_inner = (await DataConverter().encode([legacy_value]))[0]
+        stored_key = f"payload-{len(driver._storage)}"
+        driver._storage[stored_key] = legacy_inner.SerializeToString()
+        legacy_payload = _make_legacy_payload(
+            driver_name=driver.name(),
+            claim_data={"key": stored_key},
+            size_bytes=legacy_inner.ByteSize(),
+        )
+
+        # Decode all three in one batch.
+        decoded = await converter.decode(
+            [legacy_payload, new_format_payload, inline_payload], [str, str, str]
+        )
+        assert decoded[0] == legacy_value
+        assert decoded[1] == new_value
+        assert decoded[2] == inline_value
+        # Both external payloads go to the same driver and are batched into one call.
+        assert driver._retrieve_calls == 1
 
 
 if __name__ == "__main__":
