@@ -23,6 +23,7 @@ from temporalio.converter._payload_converter import JSONPlainPayloadConverter
 _T = TypeVar("_T")
 
 _REFERENCE_ENCODING = b"json/external-storage-reference"
+_MESSAGE_TYPE = b"temporal.api.sdk.v1.ExternalStorageReference"
 
 
 @dataclass
@@ -366,6 +367,7 @@ class ExternalStorage:
             raise ValueError(
                 f"Failed to serialize storage reference for driver '{driver.name()}'"
             )
+        reference_payload.metadata["messageType"] = _MESSAGE_TYPE
         reference_payload.external_payloads.add().size_bytes = external_size
 
         ExternalStorage._record_metrics(1, external_size, start_time, {driver.name()})
@@ -430,6 +432,7 @@ class ExternalStorage:
                     raise ValueError(
                         f"Failed to serialize storage reference for driver '{driver.name()}'"
                     )
+                reference_payload.metadata["messageType"] = _MESSAGE_TYPE
                 reference_payload.external_payloads.add().size_bytes = sizes[i]
                 results[indices[i]] = reference_payload
                 external_size += sizes[i]
