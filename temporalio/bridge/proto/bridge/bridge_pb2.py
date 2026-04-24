@@ -18,10 +18,10 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import duration_pb2 as google_dot_protobuf_dot_duration__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 from google.protobuf import wrappers_pb2 as google_dot_protobuf_dot_wrappers__pb2
+
 from temporal.sdk.core import (
     core_interface_pb2 as temporal_dot_sdk_dot_core_dot_core__interface__pb2,
 )
-
 from temporalio.bridge.proto.activity_task import (
     activity_task_pb2 as temporal_dot_sdk_dot_core_dot_activity__task_dot_activity__task__pb2,
 )
